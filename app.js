@@ -90,6 +90,10 @@
 
     if (r.page === 'edit') {
       renderEditPage(r.id);
+    } else if (r.page === 'result') {
+      renderResultPage(r.id);
+    } else if (r.page === 'report') {
+      renderReportPage(r.id);
     } else if (PAGE_META[r.page] && r.page !== 'project') {
       renderProjectPage(r.id, r.page);
     } else if (r.page === 'project') {
@@ -112,7 +116,7 @@
       '<a class="topbar-back" href="' + esc(opts.backHash || '#/home') + '" title="返回">' +
       esc(opts.backLabel || '← 首页') + '</a>' +
       '<button class="topbar-title" type="button"></button>' +
-      '<label class="topbar-side switch" title="专业模式：查看完整平差数据与计算书（本轮为占位开关）">' +
+      '<label class="topbar-side switch" title="专业模式：查看完整平差数据（管段/节点/环闭合差/收敛曲线）与计算书">' +
       '<input type="checkbox">' +
       '<span class="switch-track"><span class="switch-knob"></span></span>' +
       '<span class="switch-label">专业模式</span>' +
@@ -123,7 +127,9 @@
 
     toggle.checked = proMode.on;
     toggle.addEventListener('change', function () {
-      proMode.on = toggle.checked; // 本轮只记状态，不切换界面
+      proMode.on = toggle.checked;
+      // 工程页传了 onProToggle：开关后重渲染以显示/隐藏「查看平差结果」「打印计算书」入口
+      if (typeof opts.onProToggle === 'function') opts.onProToggle(toggle.checked);
     });
 
     if (opts.onRename) {
@@ -926,7 +932,10 @@
 
     if (project) {
       setTitle(project.name + ' · ' + meta.docTitle);
-      page.appendChild(buildTopbar({ name: project.name, onRename: renameProjectFlow(project.id) }));
+      page.appendChild(buildTopbar({
+        name: project.name, onRename: renameProjectFlow(project.id),
+        onProToggle: function () { render(); } // 开关专业模式 → 显示/隐藏两个入口
+      }));
 
       var shell = document.createElement('section');
       shell.className = 'card placeholder-hero';
@@ -944,11 +953,22 @@
         acts.className = 'overview-actions';
         acts.innerHTML = '<a class="btn btn-ghost" href="#/edit/' + encodeURIComponent(project.id) + '">录入管网 →</a>';
         page.appendChild(acts);
+        if (proMode.on) {
+          var proActs = document.createElement('div');
+          proActs.className = 'overview-actions pro-entry';
+          proActs.innerHTML =
+            '<a class="btn btn-ghost" href="#/result/' + encodeURIComponent(project.id) + '">查看平差结果 →</a>' +
+            '<a class="btn btn-ghost" href="#/report/' + encodeURIComponent(project.id) + '">打印计算书 →</a>';
+          page.appendChild(proActs);
+        }
         page.appendChild(buildCalcSection(project, true)); // 开始体检（校验 → 平差 → 图）
       }
     } else if (sample) {
       setTitle(sample.title + ' · 示例');
-      page.appendChild(buildTopbar({ name: sample.title, onRename: null }));
+      page.appendChild(buildTopbar({
+        name: sample.title, onRename: null,
+        onProToggle: function () { render(); } // 示例也能进专业模式（只读）
+      }));
       var s = document.createElement('section');
       s.className = 'card placeholder-hero';
       s.innerHTML =
@@ -975,6 +995,14 @@
       });
       copyActs.appendChild(copyBtn);
       page.appendChild(copyActs);
+      if (proMode.on) {
+        var proActs2 = document.createElement('div');
+        proActs2.className = 'overview-actions pro-entry';
+        proActs2.innerHTML =
+          '<a class="btn btn-ghost" href="#/result/' + encodeURIComponent(sample.id) + '">查看平差结果 →</a>' +
+          '<a class="btn btn-ghost" href="#/report/' + encodeURIComponent(sample.id) + '">打印计算书 →</a>';
+        page.appendChild(proActs2);
+      }
 
       // 示例只读体检：直接对示例数据计算（不落 store，原示例永不被修改）
       var sTarget = {
@@ -995,6 +1023,443 @@
       page.appendChild(nf);
     }
 
+    root.appendChild(page);
+  }
+
+  /* ==================== 专业模式：计算结果页（#/result/:id）与计算书（#/report/:id） ==================== */
+
+  /** 结果页/计算书共用：取工程或示例为计算对象（示例只读，不写 store）。 */
+  function resolveTarget(id) {
+    if (!id) return null;
+    var project = store.get(id);
+    if (project) return { target: project, name: project.name };
+    var sample = samples.byId(id);
+    if (!sample) return null;
+    return {
+      target: {
+        id: sample.id, name: sample.title,
+        water: sample.water, nodes: sample.nodes,
+        pipes: sample.pipes, settings: sample.settings
+      },
+      name: sample.title
+    };
+  }
+
+  /** 有缓存用缓存，否则现算（只进内存缓存，不写 store）。 */
+  function getSolvedResult(target) {
+    var cached = resultCache[target.id];
+    if (cached) return cached.result;
+    var r = WC.solver.solve(target);
+    resultCache[target.id] = { result: r, ts: Date.now() };
+    return r;
+  }
+
+  /** 科学计数：3 位有效数字（如 1.23e-17）。 */
+  function fmtSci(v) {
+    if (v === 0) return '0';
+    return v.toExponential(2);
+  }
+
+  /* —— CSV 导出：UTF-8 BOM + 逗号分隔，Excel 打开中文不乱码 —— */
+  function csvCell(v) {
+    v = String(v);
+    return /[",\r\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v;
+  }
+  function downloadCSV(filename, rows) {
+    var csv = '\uFEFF' + rows.map(function (row) {
+      return row.map(csvCell).join(',');
+    }).join('\r\n');
+    var blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    var url = URL.createObjectURL(blob);
+    var a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
+  }
+
+  /** 管段流速状态：经济 / 偏慢 / 偏快。 */
+  function pipeState(v, vMin, vMax) {
+    var a = Math.abs(v);
+    if (a > vMax) return '偏快';
+    if (a < vMin) return '偏慢';
+    return '经济';
+  }
+
+  /** 通用表格壳：标题 + 表头 + 表体（结果页与计算书共用，跨页时 thead 自动重复）。 */
+  function tableShell(title, headerCells, bodyHtml, cls) {
+    return '<div class="report-table-wrap' + (cls ? ' ' + cls : '') + '">' +
+      (title ? '<h4>' + esc(title) + '</h4>' : '') +
+      '<table class="report-table"><thead><tr>' +
+      headerCells.map(function (h) { return '<th>' + esc(h) + '</th>'; }).join('') +
+      '</tr></thead><tbody>' + bodyHtml + '</tbody></table></div>';
+  }
+
+  /** 管段结果行（HTML）：流量为负标「反向」，|v|>vMax 整行标橙。 */
+  function pipeResultRows(target, r, withGeom) {
+    var st = target.settings || {};
+    var vMin = st.vMin || 0.6, vMax = st.vMax || 1.4;
+    var b = '';
+    (r.pipes || []).forEach(function (p) {
+      var state = pipeState(p.v, vMin, vMax);
+      var pillCls = state === '经济' ? 'pill-ok' : (state === '偏快' ? 'pill-warn' : 'pill-slow');
+      var over = Math.abs(p.v) > vMax ? ' class="row-over"' : '';
+      b += '<tr' + over + '><td>' + esc(p.id) + '</td><td>' + esc(p.from) + '</td><td>' + esc(p.to) + '</td>';
+      if (withGeom) b += '<td class="cell-num">' + p.L + '</td><td class="cell-num">' + p.D + '</td><td class="cell-num">' + p.C + '</td>';
+      b += '<td class="cell-num">' + p.qLs.toFixed(3) + (p.q < 0 ? ' <span class="rev-tag">反向</span>' : '') + '</td>' +
+        '<td class="cell-num">' + Math.abs(p.v).toFixed(3) + '</td>' +
+        '<td class="cell-num">' + p.h.toFixed(4) + '</td>' +
+        '<td class="cell-num">' + p.i1000.toFixed(3) + '</td>' +
+        '<td><span class="pill ' + pillCls + '">' + state + '</span></td></tr>';
+    });
+    return b;
+  }
+
+  /** 节点结果行（HTML）。 */
+  function nodeResultRows(target, r) {
+    var b = '';
+    (r.nodes || []).forEach(function (rn) {
+      var served = rn.fixed ? '—' : servedText(WC.ui.networkMap.servedFloors(rn.pressure, target.settings));
+      b += '<tr><td>' + esc(rn.id) + '</td><td class="cell-num">' + rn.demand.toFixed(2) + '</td>' +
+        '<td class="cell-num">' + rn.elev + '</td>' +
+        '<td class="cell-num">' + rn.head.toFixed(3) + '</td>' +
+        '<td class="cell-num">' + rn.pressure.toFixed(2) + '</td>' +
+        '<td>' + served + '</td></tr>';
+    });
+    return b;
+  }
+
+  /** 收敛曲线 SVG：x = 迭代次数，y = max|ΔQ| 对数轴，收敛点标注「第 N 次收敛」。 */
+  function convergenceSvg(history) {
+    if (!history || !history.length) {
+      return '<div class="conv-empty u-muted">枝状管网没有环，流量一遍就能定下来，无需迭代。</div>';
+    }
+    var W = 640, H = 240, pl = 62, pr = 24, pt = 26, pb = 42;
+    var logs = history.map(function (h) { return Math.log10(Math.max(h.maxDQ, 1e-18)); });
+    var maxIter = history[history.length - 1].iter;
+    var lo = Math.floor(Math.min.apply(null, logs));
+    var hi = Math.ceil(Math.max.apply(null, logs));
+    if (hi <= lo) hi = lo + 1;
+    function X(it) { return pl + (maxIter === 1 ? 0.5 : (it - 1) / (maxIter - 1)) * (W - pl - pr); }
+    function Y(l) { return pt + (hi - l) / (hi - lo) * (H - pt - pb); }
+    var s = '';
+    for (var d = hi; d >= lo; d--) {
+      var gy = Y(d).toFixed(1);
+      s += '<line x1="' + pl + '" y1="' + gy + '" x2="' + (W - pr) + '" y2="' + gy + '" class="conv-grid"/>';
+      s += '<text x="' + (pl - 8) + '" y="' + (Y(d) + 3.5).toFixed(1) + '" text-anchor="end" class="conv-tick">1e' + d + '</text>';
+    }
+    for (var it2 = 1; it2 <= maxIter; it2++) {
+      s += '<text x="' + X(it2).toFixed(1) + '" y="' + (H - pb + 16) + '" text-anchor="middle" class="conv-tick">' + it2 + '</text>';
+    }
+    s += '<text x="' + ((pl + W - pr) / 2).toFixed(0) + '" y="' + (H - 6) + '" text-anchor="middle" class="conv-axis">迭代次数</text>';
+    s += '<text x="14" y="' + (pt - 8) + '" class="conv-axis">max|ΔQ| m³/s（对数轴）</text>';
+    var pts = history.map(function (h, i) { return X(h.iter).toFixed(1) + ',' + Y(logs[i]).toFixed(1); });
+    s += '<polyline points="' + pts.join(' ') + '" class="conv-line"/>';
+    history.forEach(function (h, i) {
+      s += '<circle cx="' + X(h.iter).toFixed(1) + '" cy="' + Y(logs[i]).toFixed(1) + '" r="3.5" class="conv-dot' +
+        (i === history.length - 1 ? ' conv-dot-end' : '') + '"/>';
+    });
+    var last = history[history.length - 1];
+    var lx = Math.max(pl, Math.min(X(last.iter), W - pr - 100));
+    s += '<text x="' + lx.toFixed(1) + '" y="' + (Y(logs[logs.length - 1]) - 10).toFixed(1) + '" class="conv-mark">第 ' + last.iter + ' 次收敛</text>';
+    return '<svg class="conv-svg" viewBox="0 0 ' + W + ' ' + H + '" role="img" aria-label="收敛曲线">' + s + '</svg>';
+  }
+
+  /** #/result/:id 计算结果页（专业模式完整平差数据）。 */
+  function renderResultPage(id) {
+    var res = resolveTarget(id);
+    var page = document.createElement('div');
+    page.className = 'page';
+    if (!res) {
+      setTitle('计算结果');
+      page.appendChild(buildTopbar({ name: '水压体检', onRename: null }));
+      page.appendChild(notFoundSection());
+      root.appendChild(page);
+      return;
+    }
+    var target = res.target;
+    var encId = encodeURIComponent(target.id);
+    setTitle(res.name + ' · 平差结果');
+    page.appendChild(buildTopbar({
+      name: res.name, onRename: null,
+      backHash: '#/project/' + encId, backLabel: '← 返回工程'
+    }));
+
+    var r;
+    try { r = getSolvedResult(target); }
+    catch (e) {
+      var eb = document.createElement('section');
+      eb.className = 'card calc-error';
+      eb.textContent = '计算失败：' + (e && e.message ? e.message : '未知错误');
+      page.appendChild(eb);
+      root.appendChild(page);
+      return;
+    }
+
+    /* —— 1. 指标卡（含进水流量校核） —— */
+    var supplied = 0;
+    (r.continuity || []).forEach(function (c) { if (typeof c.supplied === 'number') supplied += c.supplied; });
+    var balance = Math.abs(supplied - r.totalDemand);
+    var metrics = document.createElement('div');
+    metrics.className = 'calc-metrics';
+    metrics.innerHTML =
+      metricCard('迭代次数', r.iterations + ' 次') +
+      metricCard('最大环闭合差', fmtSci(r.maxLoopResidual) + ' m') +
+      metricCard('最大节点连续性残差', fmtSci(r.maxContinuity) + ' L/s') +
+      metricCard('总需水量', r.totalDemand.toFixed(2) + ' L/s') +
+      metricCard('进水流量校核', balance < 0.001 ? '守恒 ✓' : '差 ' + balance.toFixed(3) + ' L/s');
+    page.appendChild(metrics);
+
+    /* —— 2. 管段结果表 —— */
+    page.insertAdjacentHTML('beforeend',
+      tableShell('管段平差结果',
+        ['管段', '起点', '终点', '管长 m', '管径 mm', 'C', '流量 L/s', '流速 m/s', '水头损失 m', '1000i', '状态'],
+        pipeResultRows(target, r, true)));
+
+    /* —— 3. 节点结果表 —— */
+    page.insertAdjacentHTML('beforeend',
+      tableShell('节点水头结果',
+        ['节点', '需水量 L/s', '地面标高 m', '水头 m', '自由水压 m', '相当于可供 N 层'],
+        nodeResultRows(target, r)));
+
+    /* —— 4. 环闭合差明细 —— */
+    var cyBody = '';
+    if (!(r.cycles || []).length) {
+      cyBody = '<tr><td colspan="3" class="u-muted">枝状管网：0 个环，无闭合差需要校核。</td></tr>';
+    } else {
+      (r.cycles || []).forEach(function (c, i) {
+        cyBody += '<tr><td>' + (i + 1) + '</td><td>' + esc(c.pipes.join(' → ')) + '</td>' +
+          '<td class="cell-num">' + fmtSci(c.residual) + '</td></tr>';
+      });
+    }
+    page.insertAdjacentHTML('beforeend',
+      tableShell('环闭合差明细', ['环号', '组成管段（按环序）', '闭合差 m'], cyBody));
+
+    /* —— 5. 收敛曲线 —— */
+    var conv = document.createElement('section');
+    conv.className = 'card conv-card';
+    conv.innerHTML = '<h4>收敛曲线（每轮修正流量的最大变化量逐轮下降）</h4>' + convergenceSvg(r.history);
+    page.appendChild(conv);
+
+    /* —— 6. 导出按钮 —— */
+    var exp = document.createElement('div');
+    exp.className = 'result-exports';
+    var btnPipes = document.createElement('button');
+    btnPipes.type = 'button';
+    btnPipes.className = 'btn btn-ghost';
+    btnPipes.textContent = '导出管段 CSV';
+    var btnNodes = document.createElement('button');
+    btnNodes.type = 'button';
+    btnNodes.className = 'btn btn-ghost';
+    btnNodes.textContent = '导出节点 CSV';
+    var btnCycles = document.createElement('button');
+    btnCycles.type = 'button';
+    btnCycles.className = 'btn btn-ghost';
+    btnCycles.textContent = '导出环 CSV';
+    exp.appendChild(btnPipes);
+    exp.appendChild(btnNodes);
+    exp.appendChild(btnCycles);
+    page.appendChild(exp);
+
+    var st = target.settings || {};
+    var vMin = st.vMin || 0.6, vMax = st.vMax || 1.4;
+    btnPipes.addEventListener('click', function () {
+      var rows = [['管段', '起点', '终点', '管长(m)', '管径(mm)', 'C', '流量(L/s)', '流速(m/s)', '水头损失(m)', '1000i', '状态']];
+      (r.pipes || []).forEach(function (p) {
+        var state = pipeState(p.v, vMin, vMax);
+        rows.push([p.id, p.from, p.to, p.L, p.D, p.C,
+          p.qLs.toFixed(3) + (p.q < 0 ? '（反向）' : ''),
+          Math.abs(p.v).toFixed(3), p.h.toFixed(4), p.i1000.toFixed(3), state]);
+      });
+      downloadCSV(res.name + '-管段.csv', rows);
+    });
+    btnNodes.addEventListener('click', function () {
+      var rows = [['节点', '需水量(L/s)', '地面标高(m)', '水头(m)', '自由水压(m)', '相当于可供层数']];
+      (r.nodes || []).forEach(function (rn) {
+        rows.push([rn.id, rn.demand.toFixed(2), rn.elev,
+          rn.head.toFixed(3), rn.pressure.toFixed(2),
+          rn.fixed ? '' : Math.min(WC.ui.networkMap.servedFloors(rn.pressure, target.settings), 6)]);
+      });
+      downloadCSV(res.name + '-节点.csv', rows);
+    });
+    btnCycles.addEventListener('click', function () {
+      var rows = [['环号', '组成管段', '闭合差(m)']];
+      (r.cycles || []).forEach(function (c, i) {
+        rows.push([i + 1, c.pipes.join(' → '), c.residual.toExponential(2)]);
+      });
+      downloadCSV(res.name + '-环.csv', rows);
+    });
+
+    /* —— 7. 页脚说明 —— */
+    var foot = document.createElement('p');
+    foot.className = 'u-muted u-small pro-foot';
+    foot.textContent = '计算方法：沿程水头损失按海澄-威廉公式 h = 10.67·L·Q^1.852 / (C^1.852·D^4.87)，流量分配用哈代-克罗斯环校正逐环修正直至闭合。本页数据来自恒定流平差计算。';
+    page.appendChild(foot);
+
+    root.appendChild(page);
+  }
+
+  /** 「没有找到这个工程」卡片（结果页/计算书共用）。 */
+  function notFoundSection() {
+    var nf = document.createElement('section');
+    nf.className = 'card placeholder-hero';
+    nf.innerHTML =
+      '<h2>没有找到这个工程</h2>' +
+      '<p class="u-muted">它可能已被删除。可回首页「新建体检」或「导入 JSON」恢复备份。</p>' +
+      '<div class="notfound-actions"><a class="btn btn-primary" href="#/home">← 回首页</a></div>';
+    return nf;
+  }
+
+  /** #/report/:id 计算书（A4 打印页）。 */
+  function renderReportPage(id) {
+    var res = resolveTarget(id);
+    var page = document.createElement('div');
+    page.className = 'page report-page';
+    if (!res) {
+      setTitle('计算书');
+      page.appendChild(buildTopbar({ name: '水压体检', onRename: null }));
+      page.appendChild(notFoundSection());
+      root.appendChild(page);
+      return;
+    }
+    var target = res.target;
+    var encId = encodeURIComponent(target.id);
+    setTitle(res.name + ' · 计算书');
+    page.appendChild(buildTopbar({
+      name: res.name, onRename: null,
+      backHash: '#/project/' + encId, backLabel: '← 返回工程'
+    }));
+
+    var r;
+    try { r = getSolvedResult(target); }
+    catch (e) {
+      var eb = document.createElement('section');
+      eb.className = 'card calc-error';
+      eb.textContent = '计算失败：' + (e && e.message ? e.message : '未知错误');
+      page.appendChild(eb);
+      root.appendChild(page);
+      return;
+    }
+
+    /* —— 打印按钮（打印时隐藏） —— */
+    var printBar = document.createElement('div');
+    printBar.className = 'no-print print-bar';
+    var printBtn = document.createElement('button');
+    printBtn.type = 'button';
+    printBtn.className = 'btn btn-primary';
+    printBtn.textContent = '打印 / 另存为 PDF';
+    printBtn.addEventListener('click', function () { window.print(); });
+    printBar.appendChild(printBtn);
+    page.appendChild(printBar);
+
+    /* —— 动态页脚（第 X 页 / 共 Y 页 + 工具版本 + 生成时间） —— */
+    var now = new Date();
+    var dateStr = now.getFullYear() + '-' + pad(now.getMonth() + 1) + '-' + pad(now.getDate());
+    Array.prototype.forEach.call(document.querySelectorAll('style.wc-dyn-page'), function (s) { s.remove(); });
+    var dynStyle = document.createElement('style');
+    dynStyle.className = 'wc-dyn-page';
+    dynStyle.textContent =
+      '@page { @bottom-center { content: "水压体检 v1 · 生成于 ' + dateStr +
+      ' · 第 " counter(page) " 页 / 共 " counter(pages) " 页"; font-size: 9pt; color: #555; } }';
+    document.head.appendChild(dynStyle);
+
+    var st = target.settings || {};
+    var vMin = st.vMin || 0.6, vMax = st.vMax || 1.4;
+    var sh = serviceHeadTable(target);
+    var w = target.water || {};
+
+    /* —— 一、工程概况 —— */
+    var qd = ((w.population || 0) * (w.quota || 0)) / 1000;
+    var qh = qd * (w.kh || 0) / 24;
+    var html = '<article class="report-doc">' +
+      '<h1>供水管网水力计算书</h1>' +
+      '<p class="rp-sub">工程名称：' + esc(res.name) + ' · 计算日期：' + dateStr + '</p>' +
+      '<section class="rp-sec"><h2>一、工程概况</h2>' +
+      '<p>用水人口 ' + (w.population || 0) + ' 人；综合生活用水定额 q = ' + (w.quota || 0) +
+      ' L/(人·d)；时变化系数 Kh = ' + (w.kh || 0) + '。</p>' +
+      '<p>最高日用水量 Qd = q×N/1000 = ' + qd.toFixed(2) + ' m³/d；最高时用水量 Qh = Qd×Kh/24 = ' +
+      qh.toFixed(2) + ' m³/h；折算流量 Qh/3.6 = ' + (qh / 3.6).toFixed(2) + ' L/s；' +
+      '平差总需水量 ' + r.totalDemand.toFixed(2) + ' L/s。</p></section>';
+
+    /* —— 二、设计参数与公式 —— */
+    html += '<section class="rp-sec"><h2>二、设计参数与公式</h2>' +
+      '<p>沿程水头损失采用海澄-威廉公式：h = 10.67·L·Q<sup>1.852</sup> / (C<sup>1.852</sup>·D<sup>4.87</sup>)，' +
+      '其中 h 为沿程水头损失（m），L 为管长（m），Q 为流量（m³/s），C 为海澄-威廉系数，D 为管径（m）。</p>' +
+      '<p>环校正（哈代-克罗斯法）：ΔQ = −Σh / (1.852·Σ|h/Q|)，每环按上式独立修正流量，逐轮迭代至 |ΔQ| < 10<sup>−7</sup>。</p>' +
+      '<p>流速经济区间 ' + vMin + '～' + vMax + ' m/s。服务水头表（最小服务水头）：' +
+      '1 层 ' + sh[1] + ' m、2 层 ' + sh[2] + ' m、3 层 ' + sh[3] + ' m、4 层 ' + sh[4] +
+      ' m、5 层 ' + sh[5] + ' m、6 层 ' + sh[6] + ' m。</p></section>';
+
+    /* —— 三、节点表 —— */
+    var nb3 = '';
+    (target.nodes || []).forEach(function (n) {
+      var kind = n.kind === 'source' ? '水源（定压 ' + n.head + ' m）' : (n.kind === 'building' ? '楼栋' : '接点');
+      nb3 += '<tr><td>' + esc(n.id) + '</td><td>' + kind + '</td><td>' + n.demand + '</td><td>' + n.elev + '</td></tr>';
+    });
+    html += '<section class="rp-sec"><h2>三、节点表</h2>' +
+      tableShell('', ['节点', '类型', '需水量 L/s', '地面标高 m'], nb3) + '</section>';
+
+    /* —— 四、管段表 —— */
+    var pb4 = '';
+    (target.pipes || []).forEach(function (p) {
+      pb4 += '<tr><td>' + esc(p.id) + '</td><td>' + esc(p.from) + '</td><td>' + esc(p.to) + '</td>' +
+        '<td>' + p.L + '</td><td>' + p.D + '</td><td>' + p.C + '</td></tr>';
+    });
+    html += '<section class="rp-sec"><h2>四、管段表</h2>' +
+      tableShell('', ['管段', '起点', '终点', '管长 m', '管径 mm', 'C'], pb4) + '</section>';
+
+    /* —— 五、平差结果表 —— */
+    html += '<section class="rp-sec"><h2>五、平差结果表</h2>' +
+      tableShell('', ['管段', '起点', '终点', '流量 L/s', '流速 m/s', '水头损失 m', '1000i', '状态'],
+        pipeResultRows(target, r, false)) + '</section>';
+
+    /* —— 六、节点水头与自由水压表 —— */
+    html += '<section class="rp-sec"><h2>六、节点水头与自由水压表</h2>' +
+      tableShell('', ['节点', '需水量 L/s', '地面标高 m', '水头 m', '自由水压 m', '相当于可供 N 层'],
+        nodeResultRows(target, r)) + '</section>';
+
+    /* —— 七、校核结论 —— */
+    var vOver = (r.pipes || []).filter(function (p) { return Math.abs(p.v) > vMax; });
+    var flowLine = vOver.length
+      ? '<span class="pill pill-bad">不满足</span> ' + vOver.map(function (p) {
+          return esc(p.id) + '（' + Math.abs(p.v).toFixed(2) + ' m/s）';
+        }).join('、') + ' 流速超过 ' + vMax + ' m/s'
+      : '<span class="pill pill-ok">满足</span> 全部管段流速不超过 ' + vMax + ' m/s';
+    var rowsB = reportRows(target, r);
+    var worst = worstPoint(target, r);
+    var pressLine;
+    if (rowsB.length) {
+      pressLine = allPass(target, r)
+        ? '<span class="pill pill-ok">满足</span> 全部 ' + rowsB.length + ' 栋楼可服务层数达到实际层数，最不利点 ' + esc(worst.id) + ' 自由水压 ' + worst.pressure.toFixed(2) + ' m'
+        : '<span class="pill pill-bad">不满足</span> 最不利点 ' + esc(worst.id) + ' 自由水压 ' + worst.pressure.toFixed(2) + ' m，按服务水头表只够 ' + servedText(worst.served) + '（差 ' + (rowsB.filter(function (x) { return x.status !== 'ok'; }).length) + ' 栋楼）';
+    } else {
+      pressLine = allPass(target, r)
+        ? '<span class="pill pill-ok">满足</span> 各点自由水压均不低于 6 层服务水头 ' + sh[6] + ' m'
+        : '<span class="pill pill-bad">不满足</span> 有点自由水压低于 ' + sh[6] + ' m';
+    }
+    var convLine = (r.cycles || []).length === 0
+      ? '<span class="pill pill-ok">满足</span> 枝状管网（0 环），流量一遍即定，无需闭合差校核'
+      : (r.maxLoopResidual <= 1e-6
+        ? '<span class="pill pill-ok">满足</span> 最大环闭合差 ' + fmtSci(r.maxLoopResidual) + ' m，' + r.iterations + ' 轮收敛'
+        : '<span class="pill pill-bad">不满足</span> 最大环闭合差 ' + fmtSci(r.maxLoopResidual) + ' m');
+    html += '<section class="rp-sec"><h2>七、校核结论</h2>' +
+      '<p class="rp-check">流速校核：' + flowLine + '</p>' +
+      '<p class="rp-check">水压校核：' + pressLine + '</p>' +
+      '<p class="rp-check">闭合差校核：' + convLine + '</p></section>';
+
+    /* —— 八、计算假定 —— */
+    html += '<section class="rp-sec"><h2>八、计算假定</h2><ol class="rp-assume">' +
+      '<li>按恒定流计算，即各节点用水量不随时间变化；</li>' +
+      '<li>沿程水头损失按海澄-威廉公式计算，局部水头损失不单独计算，已折算并入沿程损失；</li>' +
+      '<li>单一水源定压供水，水源水头恒定不变。</li>' +
+      '</ol></section>';
+
+    html += '</article>';
+    var doc = document.createElement('div');
+    doc.innerHTML = html;
+    page.appendChild(doc.firstChild);
     root.appendChild(page);
   }
 
