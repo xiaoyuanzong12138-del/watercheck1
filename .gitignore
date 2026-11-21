@@ -1,0 +1,6 @@
+# IDE 预览缓存
+.trae-html-share-packages/
+.trae/
+.vscode/
+.DS_Store
+Thumbs.db

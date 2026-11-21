@@ -1,0 +1,427 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>水压体检 · 浏览器内自检</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%20100%20100'%3E%3Ctext%20y='.9em'%20font-size='90'%3E%F0%9F%A7%AA%3C/text%3E%3C/svg%3E">
+<link rel="stylesheet" href="styles.css">
+<style>
+  /* 本页专用：数值对比表 */
+  .num-table { width: 100%; border-collapse: collapse; font-size: var(--fs-13); }
+  .num-table th, .num-table td { border: 1px solid var(--line); padding: var(--sp-1) var(--sp-2); text-align: left; }
+  .num-table th { background: var(--bg); color: var(--muted); font-weight: 600; font-size: var(--fs-12); }
+  .num-table td.num { text-align: right; font-variant-numeric: tabular-nums; }
+  .num-table tr.pass td { background: #F4FBF7; }
+  .num-table tr.fail td { background: var(--danger-weak); }
+  .num-table .verdict-pass { color: var(--ok); font-weight: 600; }
+  .num-table .verdict-fail { color: var(--danger); font-weight: 600; }
+  .num-case { margin: var(--sp-3) 0 var(--sp-1); font-weight: 600; }
+</style>
+</head>
+<body>
+<div class="home">
+  <header class="hero">
+    <div class="hero-text">
+      <h1>水压体检 · 自检</h1>
+      <p class="hero-sub">tests.html · 在浏览器里直接跑，验证数据层与求解内核（哈代-克罗斯平差数值对拍）</p>
+    </div>
+  </header>
+
+  <section class="section">
+    <div class="section-head">
+      <h2 class="section-title">数据层自检结果</h2>
+      <p class="u-muted u-small" id="summary">运行中…</p>
+    </div>
+    <div class="project-list" id="list"></div>
+  </section>
+
+  <section class="section">
+    <div class="section-head">
+      <h2 class="section-title">求解内核数值自检</h2>
+      <p class="u-muted u-small" id="solver-summary">运行中…</p>
+    </div>
+    <div class="card" style="padding:var(--sp-3);overflow-x:auto">
+      <table class="num-table" id="solver-table"></table>
+    </div>
+  </section>
+
+  <footer class="footnotes">
+    <p><a href="./index.html">← 返回水压体检首页</a></p>
+    <p class="u-small">自检会临时写入 localStorage 并在结束时恢复原状，不会动你的真实工程数据。</p>
+  </footer>
+</div>
+
+<!-- 依赖顺序与 index.html 保持一致（本页用不到 app.js 与 ui/） -->
+<script src="solver.js"></script>
+<script src="samples.js"></script>
+<script src="store.js"></script>
+<script>
+(function () {
+  'use strict';
+  var store = window.WC.store;
+  var solver = window.WC.solver;
+  var samples = window.WC.samples;
+  var KEY = store.LS_KEY;
+
+  var results = [];
+  function check(name, fn) {
+    var r = { name: name, pass: false, note: '' };
+    try {
+      r.pass = fn() === true;
+      if (!r.note) r.note = r.pass ? '通过' : '断言未成立';
+    } catch (e) {
+      r.note = '异常：' + (e && e.message ? e.message : String(e));
+    }
+    results.push(r);
+  }
+  function assert(cond, msg) {
+    if (!cond) throw new Error(msg || '断言失败');
+    return true;
+  }
+
+  /* —— 备份现场，跑完恢复，不污染用户数据 —— */
+  var backup = localStorage.getItem(KEY);
+  var created = null;
+
+  check('新建工程：出现在列表且 schema 正确', function () {
+    created = store.create('自检-临时工程');
+    var all = store.loadAll();
+    assert(all.some(function (p) { return p.id === created.id; }), '列表里找不到新建工程');
+    assert(created.schema === 'watercheck/v1', 'schema 不对');
+    assert(created.settings && created.settings.serviceHead && created.settings.serviceHead[6] === 28, '缺少服务水头表');
+    return true;
+  });
+
+  check('持久化：直接重读 localStorage 能找到（刷新后仍在）', function () {
+    var raw = JSON.parse(localStorage.getItem(KEY));
+    assert(raw.some(function (p) { return p.id === created.id; }), 'localStorage 里没有');
+    return true;
+  });
+
+  check('重命名：改名生效且 updatedAt 刷新', function () {
+    var before = created.updatedAt;
+    created.name = '自检-改名后';
+    store.save(created);
+    var fresh = store.get(created.id);
+    assert(fresh.name === '自检-改名后', '名字没变');
+    assert(String(fresh.updatedAt) >= String(before), 'updatedAt 未刷新');
+    return true;
+  });
+
+  check('复制：新 id 且名称带「副本」', function () {
+    var copy = store.duplicate(created.id);
+    assert(copy && copy.id !== created.id, 'id 没有变化');
+    assert(copy.name.indexOf('副本') >= 0, '名称没有带副本');
+    return true;
+  });
+
+  check('validate：合法工程通过、坏数据被拒', function () {
+    assert(store.validate(store.get(created.id)).length === 0, '合法工程不应报错');
+    assert(store.validate({ schema: 'nope', name: '' }).length > 0, '坏数据应报错');
+    return true;
+  });
+
+  check('导出 JSON → 导入 JSON 回环一致', function () {
+    var text = store.exportJSON(store.get(created.id));
+    var back = store.importJSON(text);
+    assert(back.name === '自检-改名后', '导入后名字不一致');
+    assert(back.settings.serviceHead[6] === 28, '导入后设置不完整');
+    return true;
+  });
+
+  check('导入损坏 JSON 会明确报错（不崩页面）', function () {
+    var threw = false;
+    try { store.importJSON('{oops'); } catch (e) {
+      threw = true;
+      assert(String(e.message).length > 0, '报错信息为空');
+    }
+    assert(threw, '没有抛出错误');
+    return true;
+  });
+
+  check('删除：从列表移除', function () {
+    assert(store.remove(created.id) === true, '删除失败');
+    assert(store.get(created.id) === null, '删除后还能查到');
+    return true;
+  });
+
+  check('示例工程 4 个且带标题/简介', function () {
+    assert(samples.list.length === 4, '示例数量不是 4');
+    assert(samples.list.every(function (s) { return s.id && s.title && s.intro; }), '示例缺字段');
+    return true;
+  });
+
+  /* ============================================================
+     求解内核自检：三个算例 + 边界 + 性能
+     ============================================================ */
+  var solverRows = [];
+  function srow(caseName, name, actual, expected, tol, unit) {
+    var diff = actual - expected;
+    var pass = Math.abs(diff) <= tol;
+    solverRows.push({
+      case: caseName, name: name, actual: actual,
+      expected: expected + (tol > 0 ? ' ±' + tol : ''), diff: diff,
+      pass: pass, unit: unit || ''
+    });
+    return pass;
+  }
+  function sbound(caseName, name, value, maxExp, unit) {
+    var pass = Math.abs(value) < maxExp;
+    solverRows.push({
+      case: caseName, name: name, actual: value,
+      expected: '绝对值 < ' + maxExp, diff: value - maxExp,
+      pass: pass, unit: unit || '', bound: true
+    });
+    return pass;
+  }
+
+  function ND(id, demand, elev, fixed, head, kind) {
+    return { id: id, kind: kind || 'junction', demand: demand, elev: elev, fixed: !!fixed, head: head || 0 };
+  }
+  function PP(id, from, to, L, D, C) {
+    return { id: id, from: from, to: to, L: L, D: D, C: C };
+  }
+  function pipeOf(r, id) {
+    for (var i = 0; i < r.pipes.length; i++) if (r.pipes[i].id === id) return r.pipes[i];
+    return null;
+  }
+  function nodeOf(r, id) {
+    for (var i = 0; i < r.nodes.length; i++) if (r.nodes[i].id === id) return r.nodes[i];
+    return null;
+  }
+
+  /* —— 算例 A：教科书小网（5 节点 6 管段 2 环） —— */
+  var caseA = {
+    nodes: [
+      ND('A', 0, 0, true, 100), ND('1', 20, 5), ND('2', 25, 6), ND('3', 30, 7), ND('4', 15, 8)
+    ],
+    pipes: [
+      PP('P1', 'A', '1', 500, 400, 130),
+      PP('P2', '1', '2', 600, 300, 130),
+      PP('P3', '2', '3', 600, 250, 130),
+      PP('P4', '3', '4', 500, 200, 130),
+      PP('P5', '1', '4', 800, 250, 130),
+      PP('P6', '2', '4', 700, 200, 130)
+    ]
+  };
+  var rA = null;
+  check('算例A 能求解且收敛', function () {
+    rA = solver.solve(caseA);
+    assert(rA.converged === true, '未收敛');
+    assert(rA.cycles.length === 6 - 5 + 1, '环数应为 2');
+    return true;
+  });
+  srow('A 教科书小网', '迭代次数', rA.iterations, 13, 0, '次');
+  srow('A 教科书小网', 'P1 流量', pipeOf(rA, 'P1').qLs, 90.00, 0.05, 'L/s');
+  srow('A 教科书小网', '节点1 自由水压', nodeOf(rA, '1').pressure, 94.35, 0.05, 'm');
+  sbound('A 教科书小网', '最大环闭合差', rA.maxLoopResidual, 1e-5, 'm');
+  sbound('A 教科书小网', '最大连续性残差', rA.maxContinuity, 1e-6, 'L/s');
+
+  /* —— 算例 B：城镇管网（9 节点 10 管段 2 环） —— */
+  var caseB = {
+    nodes: [
+      ND('S', 0, 8, true, 68),
+      ND('1', 120, 12), ND('2', 150, 14), ND('3', 130, 16), ND('4', 110, 18),
+      ND('5', 100, 16), ND('6', 80, 13), ND('7', 50, 20), ND('8', 50, 19)
+    ],
+    pipes: [
+      PP('G1', 'S', '1', 800, 1000, 130),
+      PP('R1', '1', '2', 600, 800, 130),
+      PP('R2', '2', '3', 500, 600, 130),
+      PP('R3', '3', '4', 600, 400, 130),
+      PP('R4', '4', '5', 500, 350, 130),
+      PP('R5', '5', '6', 600, 350, 130),
+      PP('R6', '6', '1', 700, 500, 130),
+      PP('C1', '2', '5', 500, 450, 130),
+      PP('B1', '3', '7', 400, 300, 130),
+      PP('B2', '4', '8', 400, 300, 130)
+    ]
+  };
+  var rB = null;
+  check('算例B 能求解且收敛', function () {
+    rB = solver.solve(caseB);
+    assert(rB.converged === true, '未收敛');
+    assert(rB.cycles.length === 10 - 9 + 1, '环数应为 2');
+    return true;
+  });
+  srow('B 城镇管网', '迭代次数', rB.iterations, 7, 0, '次');
+  srow('B 城镇管网', 'R1 流量', pipeOf(rB, 'R1').qLs, 533.2, 0.05, 'L/s');
+  srow('B 城镇管网', '节点8 自由水压', nodeOf(rB, '8').pressure, 45.48, 0.05, 'm');
+  sbound('B 城镇管网', '最大环闭合差', rB.maxLoopResidual, 1e-5, 'm');
+  sbound('B 城镇管网', '最大连续性残差', rB.maxContinuity, 1e-6, 'L/s');
+
+  /* —— 算例 C：幸福里小区（10 节点 10 管段 1 环） —— */
+  var caseC = {
+    nodes: [
+      ND('S', 0, 0, true, 18),
+      ND('J1', 0, 0), ND('J2', 0, 0), ND('J3', 0, 0),
+      ND('L1', 0.667, 0, false, 0, 'building'), ND('L2', 0.667, 0, false, 0, 'building'),
+      ND('L3', 0.667, 0, false, 0, 'building'), ND('L4', 0.667, 0, false, 0, 'building'),
+      ND('L5', 0.667, 0, false, 0, 'building'), ND('L6', 0.667, 0, false, 0, 'building')
+    ],
+    pipes: [
+      PP('M1', 'S', 'J1', 60, 80, 90),
+      PP('M2', 'J1', 'J2', 120, 80, 90),
+      PP('M3', 'J2', 'J3', 110, 80, 90),
+      PP('M4', 'J3', 'J1', 130, 80, 90),
+      PP('B1', 'J1', 'L1', 20, 40, 90),
+      PP('B2', 'J1', 'L2', 25, 40, 90),
+      PP('B3', 'J2', 'L3', 30, 40, 90),
+      PP('B4', 'J2', 'L4', 40, 32, 90),
+      PP('B5', 'J3', 'L5', 30, 40, 90),
+      PP('B6', 'J3', 'L6', 35, 32, 90)
+    ]
+  };
+  var rC = null;
+  check('算例C 能求解且收敛', function () {
+    rC = solver.solve(caseC);
+    assert(rC.converged === true, '未收敛');
+    assert(rC.cycles.length === 10 - 10 + 1, '环数应为 1');
+    return true;
+  });
+  var minP = null, minId = '';
+  rC.nodes.forEach(function (nn) {
+    if (nn.demand > 0 && (minP === null || nn.pressure < minP)) { minP = nn.pressure; minId = nn.id; }
+  });
+  srow('C 幸福里小区', '最低自由水压', minP, 13.88, 0.05, 'm');
+  srow('C 幸福里小区', '最低水压出现在 L4', minId === 'L4' ? 1 : 0, 1, 0, '');
+  srow('C 幸福里小区', '总需水', rC.totalDemand, 4.0, 0.05, 'L/s');
+  sbound('C 幸福里小区', '最大环闭合差', rC.maxLoopResidual, 1e-5, 'm');
+  sbound('C 幸福里小区', '最大连续性残差', rC.maxContinuity, 1e-6, 'L/s');
+
+  /* —— 边界与稳健性 —— */
+  check('纯函数：solve 不修改输入工程', function () {
+    var before = JSON.stringify(caseA);
+    solver.solve(caseA);
+    assert(JSON.stringify(caseA) === before, '输入被改动了');
+    return true;
+  });
+
+  check('枝状管网（0 环）正常出结果', function () {
+    var r = solver.solve({
+      nodes: [ND('S', 0, 0, true, 50), ND('X', 5, 0), ND('Y', 3, 2)],
+      pipes: [PP('T1', 'S', 'X', 100, 100, 100), PP('T2', 'X', 'Y', 100, 50, 100)]
+    });
+    assert(r.converged === true && r.iterations === 0, '枝状网应 0 次迭代直接收敛');
+    assert(Math.abs(pipeOf(r, 'T1').qLs - 8) < 1e-6, 'T1 应过 8 L/s');
+    return true;
+  });
+
+  check('空数据报「请先录入节点和管段」', function () {
+    try { solver.solve({ nodes: [], pipes: [] }); } catch (e) {
+      assert(e.message === '请先录入节点和管段', '报错文案不符：' + e.message);
+      return true;
+    }
+    throw new Error('没有抛错');
+  });
+
+  check('无定压节点报错', function () {
+    try { solver.solve({
+      nodes: [ND('S', 0, 0), ND('X', 5, 0)],
+      pipes: [PP('T1', 'S', 'X', 100, 100, 100)]
+    }); } catch (e) {
+      assert(e.message.indexOf('定压') >= 0, '报错文案不符：' + e.message);
+      return true;
+    }
+    throw new Error('没有抛错');
+  });
+
+  check('管网不连通报错并点名节点', function () {
+    try { solver.solve({
+      nodes: [ND('S', 0, 0, true, 50), ND('A', 5, 0), ND('孤岛', 5, 0)],
+      pipes: [PP('T1', 'S', 'A', 100, 100, 100)]
+    }); } catch (e) {
+      assert(e.message === '管网不连通：节点 孤岛 无法到达定压节点', '报错文案不符：' + e.message);
+      return true;
+    }
+    throw new Error('没有抛错');
+  });
+
+  check('单管段单节点（环两端同节点）报明确错误', function () {
+    try { solver.solve({
+      nodes: [ND('S', 0, 0, true, 50)],
+      pipes: [PP('T1', 'S', 'S', 100, 100, 100)]
+    }); } catch (e) {
+      assert(e.message.indexOf('必须连接两个不同的已有节点') >= 0, '报错文案不符：' + e.message);
+      return true;
+    }
+    throw new Error('没有抛错');
+  });
+
+  check('性能：50 节点 / 80 管段 < 100ms（长梯网按方法特性不要求 300 轮内收敛）', function () {
+    var nodes = [ND('T0', 0, 0, true, 100)];
+    var pipes = [];
+    for (var k = 1; k <= 49; k++) nodes.push(ND('T' + k, 2, 0));
+    for (var k2 = 0; k2 <= 48; k2++) pipes.push(PP('C' + k2, 'T' + k2, 'T' + (k2 + 1), 100, 200, 100));
+    for (var k3 = 0; k3 <= 30; k3++) pipes.push(PP('H' + k3, 'T' + k3, 'T' + (k3 + 2), 150, 150, 100));
+    var t0 = (window.performance && performance.now) ? performance.now() : Date.now();
+    var r = solver.solve({ nodes: nodes, pipes: pipes });
+    var t1 = (window.performance && performance.now) ? performance.now() : Date.now();
+    assert(r.cycles.length === 80 - 50 + 1, '环数应为 31');
+    assert(r.maxContinuity < 1e-6, '节点连续性必须精确成立：' + r.maxContinuity);
+    var ms = t1 - t0;
+    assert(ms < 100, '耗时 ' + ms.toFixed(1) + ' ms，超过 100ms');
+    return true;
+  });
+
+  /* —— 恢复现场 —— */
+  if (backup === null) localStorage.removeItem(KEY);
+  else localStorage.setItem(KEY, backup);
+
+  /* —— 渲染：数据层结果 —— */
+  var listEl = document.getElementById('list');
+  var passed = 0;
+  results.forEach(function (r) {
+    if (r.pass) passed++;
+    var row = document.createElement('div');
+    row.className = 'card project-item test-row ' + (r.pass ? 'pass' : 'fail');
+    row.innerHTML =
+      '<div class="project-info">' +
+      '<h3 class="project-name">' + (r.pass ? '✅ ' : '❌ ') + r.name + '</h3>' +
+      '</div>' +
+      '<p class="test-note">' + r.note + '</p>';
+    listEl.appendChild(row);
+  });
+
+  var sum = document.getElementById('summary');
+  sum.textContent = passed + ' / ' + results.length + ' 通过';
+  sum.style.color = passed === results.length ? 'var(--ok)' : 'var(--danger)';
+
+  /* —— 渲染：求解内核数值表 —— */
+  var table = document.getElementById('solver-table');
+  var html = '<thead><tr><th>算例</th><th>检查项</th><th class="num">实际值</th><th class="num">期望值</th><th class="num">差值</th><th>结果</th></tr></thead><tbody>';
+  var solverPassed = 0;
+  solverRows.forEach(function (r2) {
+    if (r2.pass) solverPassed++;
+    html += '<tr class="' + (r2.pass ? 'pass' : 'fail') + '">' +
+      '<td>' + r2.case + '</td><td>' + r2.name + '</td>' +
+      '<td class="num">' + fmtV(r2.actual, r2.bound) + (r2.unit ? ' ' + r2.unit : '') + '</td>' +
+      '<td class="num">' + r2.expected + '</td>' +
+      '<td class="num">' + fmtV(r2.diff, r2.bound) + '</td>' +
+      '<td class="' + (r2.pass ? 'verdict-pass' : 'verdict-fail') + '">' + (r2.pass ? 'PASS' : 'FAIL') + '</td></tr>';
+  });
+  html += '</tbody>';
+  table.innerHTML = html;
+
+  function fmtV(v, isBound) {
+    if (typeof v === 'number') {
+      if (isBound) return v.toExponential(2);
+      return Math.abs(v) >= 100 ? v.toFixed(1) : v.toFixed(3);
+    }
+    return String(v);
+  }
+
+  var solverSum = document.getElementById('solver-summary');
+  solverSum.textContent = '求解内核：' + solverPassed + ' / ' + solverRows.length + ' 项通过';
+  solverSum.style.color = solverPassed === solverRows.length ? 'var(--ok)' : 'var(--danger)';
+
+  document.title = (passed === results.length && solverPassed === solverRows.length ? '全部通过' : '有失败项') + ' · 水压体检自检';
+
+  /* 供自动化脚本读取 */
+  window.__WC_TESTS__ = { passed: passed, total: results.length, results: results };
+  window.__WC_SOLVER__ = { passed: solverPassed, total: solverRows.length, rows: solverRows };
+})();
+</script>
+</body>
+</html>
