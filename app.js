@@ -198,6 +198,7 @@
     var page = document.createElement('div');
     page.className = 'home';
     page.appendChild(buildHero());
+    page.appendChild(buildScrolly());
     page.appendChild(buildShowcase());
     var guide = buildGuide();
     if (guide) page.appendChild(guide);
@@ -359,7 +360,157 @@
     return bar;
   }
 
-  /** 页面末尾的「为什么做这个」故事卡（层数取自幸福里示例的实时结果）。 */
+  /** 首页「滚动驱动」舞台：楼体弹起 + 水随滚动爬升 + 旁白/解释框。 */
+  function buildScrolly() {
+    var sec = document.createElement('section');
+    sec.className = 'scrolly';
+
+    var s = samples.byId('sample-liuceng-muzhi');
+    var c = s ? sampleResult(s) : null;
+    if (!c || !c.ok) {
+      console.warn('滚动舞台跳过：示例求解失败');
+      sec.classList.add('is-off');
+      return sec;
+    }
+    var target = c.target, result = c.result;
+    var worst = worstPoint(target, result);
+    if (!worst || !worst.floors) { sec.classList.add('is-off'); return sec; }
+
+    var fig = buildFloorDiagram(target, result, { scrub: true });
+    if (!fig || !fig.fdApi || !fig.fdApi.scrub) {
+      console.warn('滚动舞台跳过：楼层图不可用');
+      sec.classList.add('is-off');
+      return sec;
+    }
+
+    var floors = worst.floors;
+    var served = fig.fdApi.served;
+    var src = mainSource(target);
+    var entry = src ? ((src.head || 0) - (src.elev || 0)) : 0;
+    var sh = serviceHeadTable(target);
+    var need = floors <= 6 ? (sh[Math.max(floors, 1)] || sh[6]) : 10 + 4 * (floors - 1);
+    var friction = Math.max(0, entry - (worst.pressure + worst.elev));
+    var gap = Math.max(0, (need + friction) - entry);
+
+    var stage = document.createElement('div');
+    stage.className = 'scrolly-stage';
+    var canvas = document.createElement('div');
+    canvas.className = 'scrolly-canvas';
+    var copy = document.createElement('div');
+    copy.className = 'scrolly-copy';
+
+    canvas.appendChild(fig);
+    var tie = document.createElement('div');
+    tie.className = 'scrolly-tie';
+    canvas.appendChild(tie);
+
+    var narr = document.createElement('div');
+    narr.className = 'scrolly-narr';
+    narr.innerHTML =
+      '<p class="scrolly-line">水从楼下的进水管进来</p>' +
+      '<p class="scrolly-line">每上一层楼，就要多 4 米水头</p>' +
+      '<p class="scrolly-line">' + served + ' 层刚好够</p>' +
+      '<p class="scrolly-line">再往上，推不动了</p>';
+    var lines = Array.prototype.slice.call(narr.children);
+
+    var exp = document.createElement('div');
+    exp.className = 'scrolly-explain';
+    exp.innerHTML =
+      '<h3>为什么停在这？</h3>' +
+      '<p>这栋楼的市政入口水头约 ' + entry.toFixed(1) + ' 米。</p>' +
+      '<p>每往上多一层，就要多约 4 米。</p>' +
+      '<p>' + floors + ' 层要 ' + need + ' 米，现在只有 ' + entry.toFixed(1) + ' 米 —— 差 ' + gap.toFixed(1) + ' 米。</p>' +
+      '<p>再往上的水，只能靠二次加压。</p>' +
+      '<p class="scrolly-src">依据最小服务水头估算；数据为内置示例</p>';
+
+    copy.appendChild(narr);
+    copy.appendChild(exp);
+    stage.appendChild(canvas);
+    stage.appendChild(copy);
+    sec.appendChild(stage);
+
+    var reduce = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    var lastP = -1, pending = false, curIdx = -1, expOn = false, logged = false;
+    var gaps = [], lastTick = 0;
+
+    function placeTie() {
+      var svg = canvas.querySelector('.floor-svg');
+      if (!svg) return;
+      var r = svg.getBoundingClientRect(), cr = canvas.getBoundingClientRect();
+      var y = fig.fdApi.waterY();
+      var x0 = r.left - cr.left + (140 / 320) * r.width;
+      tie.style.left = Math.round(x0) + 'px';
+      tie.style.width = Math.max(0, Math.round(cr.width - x0)) + 'px';
+      tie.style.top = Math.round(r.top - cr.top + (y / 400) * r.height) + 'px';
+    }
+
+    function apply(p) {
+      fig.fdApi.scrub(p);
+      var idx = p < 0.28 ? 0 : p < 0.62 ? 1 : p < 0.78 ? 2 : 3;
+      if (idx !== curIdx) {
+        curIdx = idx;
+        lines.forEach(function (ln, i) { ln.classList.toggle('is-on', i === idx); });
+      }
+      var on = p >= 0.80;
+      if (on !== expOn) {
+        expOn = on;
+        exp.classList.toggle('is-on', on);
+        tie.classList.toggle('is-on', on);
+      }
+      if (on) placeTie();
+    }
+
+    function computeP() {
+      var rect = sec.getBoundingClientRect();
+      var total = sec.offsetHeight - window.innerHeight;
+      if (total <= 0) return 0;
+      return Math.min(1, Math.max(0, -rect.top / total));
+    }
+
+    function tick() {
+      pending = false;
+      if (!sec.isConnected) {
+        window.removeEventListener('scroll', onScroll);
+        window.removeEventListener('resize', onScroll);
+        return;
+      }
+      var p = computeP();
+      if (Math.abs(p - lastP) < 0.002) return;
+      lastP = p;
+      apply(p);
+
+      var t = (window.performance && performance.now) ? performance.now() : Date.now();
+      if (lastTick && t - lastTick < 100) gaps.push(t - lastTick); // 只取连续滚动的帧间隔，忽略停顿
+      lastTick = t;
+      if (!logged && gaps.length >= 30) {
+        var sum = 0;
+        for (var gi = 0; gi < gaps.length; gi++) sum += gaps[gi];
+        console.log('[scrolly] 滚动重绘帧率 ' + (1000 / (sum / gaps.length)).toFixed(1) + ' fps');
+        logged = true;
+      }
+    }
+
+    function onScroll() {
+      if (pending) return;
+      pending = true;
+      requestAnimationFrame(tick);
+    }
+
+    if (reduce) {
+      apply(1); // 减少动效：直接终态 + 解释框
+      return sec;
+    }
+
+    apply(computeP());
+    window.addEventListener('scroll', onScroll, { passive: true });
+    window.addEventListener('resize', onScroll);
+    document.addEventListener('visibilitychange', function () {
+      if (!document.hidden && sec.isConnected) onScroll();
+    });
+    return sec;
+  }
+
+
   function buildStory() {
     var sec = document.createElement('section');
     sec.className = 'story';
@@ -1784,8 +1935,10 @@
 
   /* ==================== 体检页：楼层剖面图（静态 SVG，不带动画） ==================== */
 
-  /** 楼层剖面图：等轴测结构 + 水爬升动画。所有数值来自求解结果。 */
-  function buildFloorDiagram(target, result) {
+  /** 楼层剖面图：等轴测结构 + 水爬升动画。所有数值来自求解结果。
+   *  opts.scrub = true 时改为「滚动驱动」：不自动播放，由外部调用 fdApi.scrub(p) 控制水位。 */
+  function buildFloorDiagram(target, result, opts) {
+    var scrub = !!(opts && opts.scrub);
     var scope;
     try {
       scope = verdictScope(target, result);
@@ -1865,13 +2018,13 @@
     s += '<text class="fd-note" x="316" y="38" text-anchor="end" font-size="10" font-weight="600" fill="#DC2626" opacity="0"></text>';
 
     var wrap = document.createElement('div');
-    wrap.className = 'floor-card';
+    wrap.className = 'floor-card' + (scrub ? ' is-scrub' : '');
     wrap.innerHTML =
       '<svg class="floor-svg" viewBox="0 0 320 400" role="img" aria-label="楼层水压剖面图：' + esc(worst.id) +
       ' 共 ' + floors + ' 层，能供到 ' + served0 + ' 层">' + s + '</svg>' +
-      '<div class="fd-bar"><button type="button" class="fd-btn fd-replay">重播</button>' +
-      '<button type="button" class="fd-btn fd-restore" hidden>恢复原状</button></div>' +
-      '<p class="fd-caption"></p>';
+      (scrub ? '' : '<div class="fd-bar"><button type="button" class="fd-btn fd-replay">重播</button>' +
+        '<button type="button" class="fd-btn fd-restore" hidden>恢复原状</button></div>' +
+        '<p class="fd-caption"></p>');
 
     var svg = wrap.querySelector('svg');
     function q(sel) { return svg.querySelector(sel); }
@@ -1942,7 +2095,7 @@
       elChipText.setAttribute('y', (ly + 11.5).toFixed(1));
     }
     function setNote(text, op) { elNote.textContent = text; elNote.setAttribute('opacity', op); }
-    function setCaption(text) { elCaption.textContent = text; }
+    function setCaption(text) { if (elCaption) elCaption.textContent = text; }
     function resetFlash() {
       flEls.forEach(function (ln) { ln.setAttribute('stroke', '#F5F9FD'); ln.setAttribute('stroke-width', 1); });
     }
@@ -2092,8 +2245,10 @@
     }
     document.addEventListener('visibilitychange', onVis);
 
-    wrap.querySelector('.fd-replay').addEventListener('click', function () { begin(playInitial); });
-    btnRestore.addEventListener('click', function () { begin(playInitial); });
+    if (!scrub) {
+      wrap.querySelector('.fd-replay').addEventListener('click', function () { begin(playInitial); });
+      btnRestore.addEventListener('click', function () { begin(playInitial); });
+    }
 
     /* 兜底：减少动效 → 直接显示最终状态 */
     function showFinal() {
@@ -2111,14 +2266,46 @@
         : '现状：水只供到 ' + served0 + ' 层（共 ' + floors + ' 层）');
     }
 
+    /* —— 滚动驱动（scrub）：外部按页面滚动进度 p 直接摆放水位 —— */
+    var curScrubY = bottomY;
+    function scrubTo(p) {
+      var e = Math.min(1, Math.max(0, p / 0.10));
+      svg.style.opacity = e.toFixed(3);
+      svg.style.transform = 'translateY(' + (60 * (1 - e)).toFixed(1) + 'px) scale(' + (0.92 + 0.08 * e).toFixed(3) + ')';
+
+      var y;
+      if (p <= 0.10) y = bottomY;
+      else if (p < 0.66) y = bottomY + (waterY0 - bottomY) * ((p - 0.10) / 0.56);
+      else if (p < 0.74) y = waterY0 - 0.3 * bandH * ((p - 0.66) / 0.08);
+      else if (p < 0.80) y = (waterY0 - 0.3 * bandH) + 0.25 * bandH * ((p - 0.74) / 0.06);
+      else y = waterY0 - 0.05 * bandH;
+      curScrubY = y;
+
+      elInlet.setAttribute('opacity', 1);
+      setWater(y, now() / 1000);
+      var wet = Math.min(floors, Math.floor((bottomY - y) / bandH + 1e-6));
+      var rv = Math.min(1, Math.max(0, (p - 0.74) / 0.06));
+      setFloors(wet, rv, null);
+      var last = p >= 0.80 ? 1 : 0;
+      elLine.setAttribute('opacity', last);
+      elChip.setAttribute('opacity', last);
+      setNote('', 0);
+      setChip(served0 + ' 层 · ' + worst.pressure.toFixed(1) + ' m', last);
+      placeChip(y);
+      resetFlash();
+    }
+
     wrap.fdApi = {
       floors: floors,
       served: served0,
+      scrub: scrubTo,
+      waterY: function () { return curScrubY; },
       play: function () { begin(playInitial); },
       plan: function (kind, plan, onDone) { if (reduced) { playPlan(kind, plan, onDone); onDone && onDone(); } else { begin(function (e) { playPlan(kind, plan, onDone, e); }); } },
       final: showFinal
     };
 
+    if (scrub) { scrubTo(0); return wrap; }
     if (reduced) showFinal();
     return wrap;
   }
