@@ -522,7 +522,14 @@ button { font-family: inherit; font-size: inherit; }
   max-height: 62vh;
   border: 1px solid var(--line);
   border-radius: var(--radius-s);
-  background: var(--surface);
+  background:
+    linear-gradient(to right, var(--surface) 30%, rgba(255,255,255,0)) left center,
+    linear-gradient(to left, var(--surface) 30%, rgba(255,255,255,0)) right center,
+    radial-gradient(farthest-side at 0 50%, rgba(15,35,60,.16), rgba(15,35,60,0)) left center,
+    radial-gradient(farthest-side at 100% 50%, rgba(15,35,60,.16), rgba(15,35,60,0)) right center;
+  background-repeat: no-repeat;
+  background-size: 28px 100%, 28px 100%, 12px 100%, 12px 100%;
+  background-attachment: local, local, scroll, scroll;
 }
 .grid-table { border-collapse: separate; border-spacing: 0; width: 100%; min-width: max-content; font-size: var(--fs-13); }
 .grid-table th {
@@ -972,6 +979,140 @@ button { font-family: inherit; font-size: inherit; }
 
 @media (max-width: 768px) {
   .map-layout { grid-template-columns: 1fr; }
+}
+
+/* ==================== 移动端打磨 / 稳定性 / 可访问性 ==================== */
+
+/* 首页首次访问引导条 */
+.guide-bar {
+  display: flex; align-items: center; gap: var(--sp-2);
+  flex-wrap: wrap;
+  margin: 0 0 var(--sp-4);
+  padding: 10px 12px;
+  border: 1px solid #C7DDF6;
+  background: #EFF7FF;
+  border-radius: var(--radius-s);
+  font-size: var(--fs-13);
+}
+.guide-text { flex: 1 1 200px; color: var(--ink); }
+.guide-close {
+  flex: none; border: none; background: none; cursor: pointer;
+  font-size: 20px; line-height: 1; color: var(--muted);
+  padding: 4px 8px; border-radius: var(--radius-xs);
+}
+.guide-close:hover { background: #DCEBFB; color: var(--ink); }
+
+/* 白话解释小圆点 */
+.info-dot {
+  position: relative;
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px; margin-left: 4px;
+  border: 1px solid var(--line); border-radius: 50%;
+  background: var(--surface); color: var(--muted);
+  font-size: 12px; line-height: 1; cursor: pointer;
+  vertical-align: middle;
+}
+.info-dot:hover, .info-dot:focus-visible { border-color: var(--brand); color: var(--brand); }
+.info-dot::after {
+  content: attr(data-tip);
+  position: absolute; left: 50%; top: calc(100% + 6px);
+  transform: translateX(-50%);
+  width: max-content; max-width: 260px;
+  padding: 8px 10px;
+  border-radius: var(--radius-s);
+  background: #1F2A37; color: #fff;
+  font-size: 12px; line-height: 1.55; font-weight: 400; text-align: left;
+  white-space: normal;
+  display: none; z-index: 30;
+  box-shadow: 0 6px 18px rgba(15, 35, 60, .22);
+}
+.info-dot.is-open::after { display: block; }
+
+.verdict-head { display: flex; align-items: flex-start; gap: 6px; }
+.verdict-head .verdict-big { flex: 1; }
+
+/* 计算失败红条 + 回到数据 */
+.calc-error { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); flex-wrap: wrap; }
+.calc-error-msg { font-weight: 600; }
+
+/* 管网图图例（图下方一行，不压节点） */
+.nw-legend-bar {
+  display: flex; align-items: center; gap: var(--sp-3);
+  flex-wrap: wrap;
+  padding: 6px 4px 0;
+  font-size: 12px; color: var(--muted);
+}
+.nw-legend-item { display: inline-flex; align-items: center; gap: 5px; white-space: nowrap; }
+.nw-legend-item i { width: 10px; height: 10px; border-radius: 2px; display: inline-block; }
+
+/* 表格：横向滚动 + 表头吸顶 + 右侧渐隐提示（还能往右滚） */
+.report-table-wrap {
+  overflow: auto;
+  -webkit-overflow-scrolling: touch;
+  background:
+    linear-gradient(to right, var(--surface) 30%, rgba(255,255,255,0)) left center,
+    linear-gradient(to left, var(--surface) 30%, rgba(255,255,255,0)) right center,
+    radial-gradient(farthest-side at 0 50%, rgba(15,35,60,.16), rgba(15,35,60,0)) left center,
+    radial-gradient(farthest-side at 100% 50%, rgba(15,35,60,.16), rgba(15,35,60,0)) right center;
+  background-repeat: no-repeat;
+  background-size: 28px 100%, 28px 100%, 12px 100%, 12px 100%;
+  background-attachment: local, local, scroll, scroll;
+}
+.report-table thead th {
+  position: sticky; top: 0; z-index: 2;
+  background: var(--surface);
+  box-shadow: inset 0 -2px 0 var(--line);
+}
+
+/* 按钮状态补全 + 键盘焦点可见 */
+.btn:hover { filter: brightness(.97); }
+.btn:active:not(:disabled) { transform: translateY(1px); filter: brightness(.94); }
+.btn:disabled, .btn.is-disabled { opacity: .55; cursor: not-allowed; box-shadow: none; }
+.btn:focus-visible,
+.act:focus-visible,
+.guide-close:focus-visible,
+.info-dot:focus-visible,
+.switch input:focus-visible + .switch-track,
+.sample-card:focus-visible,
+a:focus-visible {
+  outline: 3px solid #7FB3F0;
+  outline-offset: 2px;
+}
+a:focus-visible { border-radius: var(--radius-xs); }
+
+/* 手机：按钮够大、首页首屏能看到「新建体检」、示例单列 */
+@media (max-width: 560px) {
+  .btn { min-height: 44px; }
+  .btn-sm, .act { min-height: 40px; }
+  .hero { margin: var(--sp-3) 0 var(--sp-4); align-items: stretch; flex-direction: column; gap: var(--sp-3); }
+  .hero-text h1 { font-size: 24px; }
+  .hero .btn { width: 100%; }
+  .sample-grid { grid-template-columns: 1fr; }
+  .calc-metrics { grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: var(--sp-2); }
+  .guide-bar { padding: 8px 10px; }
+  .verdict-diags li { flex-direction: column; gap: 2px; }
+  .report-doc { padding: var(--sp-3); }
+  .report-table { min-width: 340px; }
+  .plan-side { width: 100%; }
+  .plan-try { flex: 1 1 auto; }
+}
+
+@media (max-width: 414px) {
+  .report-table { min-width: 320px; }
+  .metric-card { padding: var(--sp-2); }
+  .topbar { padding-left: var(--sp-2); padding-right: var(--sp-2); }
+  .switch-label { display: none; }   /* 窄屏只留开关，避免挤压标题 */
+}
+
+/* 手机上的表格给一个高度上限，表头才能吸顶（长表在容器内滚动） */
+@media (max-width: 768px) {
+  .report-table-wrap { max-height: 72vh; }
+}
+
+/* 打印页在手机上也不能横向溢出 */
+@media (max-width: 768px) {
+  .report-doc { max-width: 100%; }
+  .report-doc .report-table-wrap { overflow-x: auto; }
 }
 
 /* 尊重系统减弱动效设置 */

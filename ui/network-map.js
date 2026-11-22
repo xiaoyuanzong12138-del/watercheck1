@@ -354,18 +354,18 @@
       rootG.appendChild(g);
     });
 
-    /* ============ 图例（右下角） ============ */
-    var legend = svgEl('g', { 'class': 'nw-legend' });
-    [[C_OK, '达标'], [C_WARN, '差1层'], [C_BAD, '差2层以上'], [C_NONE, '无数据']].forEach(function (item, li) {
-      var lx = 706 + li * 74;
-      legend.appendChild(svgEl('rect', { x: lx, y: 594, width: 12, height: 12, rx: 2, fill: item[0] }));
-      var lt = svgEl('text', { x: lx + 16, y: 604, 'font-size': 10, fill: MUTED });
-      lt.textContent = item[1];
-      legend.appendChild(lt);
+    /* ============ 图例（图下方独立一行，不压住任何节点，也不随缩放变形） ============ */
+    var legendBar = document.createElement('div');
+    legendBar.className = 'nw-legend-bar';
+    [[C_OK, '达标'], [C_WARN, '差1层'], [C_BAD, '差2层以上'], [C_NONE, '无数据']].forEach(function (item) {
+      var chip = document.createElement('span');
+      chip.className = 'nw-legend-item';
+      chip.innerHTML = '<i style="background:' + item[0] + '"></i>' + item[1];
+      legendBar.appendChild(chip);
     });
-    rootG.appendChild(legend);
 
     container.appendChild(wrap);
+    wrap.appendChild(legendBar);
 
     /* —— 导出 SVG —— */
     function exportSvg() {

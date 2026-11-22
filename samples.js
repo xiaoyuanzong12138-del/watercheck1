@@ -74,11 +74,12 @@
     ],
     settings: settings()
   };
-  // 三栋 A/B/C，每栋 5 个立管节点（6/9/12/15/18 层），隔层取水
+  // 三栋 A/B/C，每栋 5 个立管测点（第 6/9/12/15/18 层），隔层取水
+  // 每个测点按自己的楼层数记 floors（不是整栋 18 层），户数/人数留 0 → 结论按「用水点」统计
   ['A', 'B', 'C'].forEach(function (b) {
     [[6, 18, 0.247], [9, 27, 0], [12, 36, 0.247], [15, 45, 0], [18, 54, 0.247]].forEach(function (pt) {
       s2.nodes.push(ND(b + pt[0], 'building', pt[2], pt[1], {
-        building: { floors: 18, households: 60, people: 200 }
+        building: { floors: pt[0], households: 0, people: 0 }
       }));
     });
     s2.pipes.push(PP('L' + b + '1', 'J', b + '6', 30, 65, 120));

@@ -101,6 +101,11 @@
     } else {
       renderHome();
     }
+    if (document.querySelector('.report-doc') || r.page === 'report') {
+      // 计算书打印页不重复放页脚（正文自带页码）
+    } else {
+      root.appendChild(buildFootnotes());
+    }
   }
 
   /* ==================== 顶栏 ==================== */
@@ -193,10 +198,41 @@
     var page = document.createElement('div');
     page.className = 'home';
     page.appendChild(buildHero());
+    var guide = buildGuide();
+    if (guide) page.appendChild(guide);
     page.appendChild(buildSamples());
     page.appendChild(buildMyProjects());
-    page.appendChild(buildFootnotes());
     root.appendChild(page);
+  }
+
+  /* —— 首次访问引导条（关掉后记住，不再出现） —— */
+  var GUIDE_KEY = 'wc.guide.v1';
+  function buildGuide() {
+    var dismissed = false;
+    try { dismissed = localStorage.getItem(GUIDE_KEY) === '1'; } catch (e) { /* 隐私模式忽略 */ }
+    if (dismissed) return null;
+    var bar = document.createElement('div');
+    bar.className = 'guide-bar';
+    bar.innerHTML = '<span class="guide-text">第一次来？先打开示例「6 层老小区」看看。</span>';
+    var go = document.createElement('button');
+    go.type = 'button';
+    go.className = 'btn btn-primary btn-sm';
+    go.textContent = '打开示例';
+    go.addEventListener('click', function () {
+      navigate('#/project/' + encodeURIComponent('sample-liuceng-muzhi'));
+    });
+    var close = document.createElement('button');
+    close.type = 'button';
+    close.className = 'guide-close';
+    close.setAttribute('aria-label', '关闭引导');
+    close.textContent = '×';
+    close.addEventListener('click', function () {
+      try { localStorage.setItem(GUIDE_KEY, '1'); } catch (e) { /* 存不进就算了 */ }
+      bar.remove();
+    });
+    bar.appendChild(go);
+    bar.appendChild(close);
+    return bar;
   }
 
   function buildHero() {
@@ -364,8 +400,10 @@
 
   function buildFootnotes() {
     var f = document.createElement('footer');
-    f.className = 'footnotes';
+    f.className = 'footnotes app-footer no-print';
     f.innerHTML =
+      '<p class="foot-line"><strong>水压体检 v0.9</strong> · 更新于 2026-11-22 · 数据仅存本机 · ' +
+      '<a href="https://xiaoyuanzong12138-del.github.io/watercheck1/" target="_blank" rel="noopener">在线体验</a></p>' +
       '<p><strong>做了什么：</strong>录入小区的楼栋和管道，工具算出每栋楼的水压够不够、最多能供到第几层，并给出加压或换管的建议。</p>' +
       '<p><strong>用什么方法：</strong>先按用水人数估算各楼栋流量，再用环状管网平差（反复修正管段流量、直到各环路压力闭合的算法）算出各楼栋水压。</p>' +
       '<p><strong>数据安全：</strong>不联网、不登录，所有数据只存在你的浏览器里（本地存储，不上传到任何服务器）。</p>';
@@ -385,8 +423,14 @@
 
   var resultCache = {}; // id → { result, ts }（内存缓存：重进工程页直接显示）
 
-  function metricCard(label, value) {
-    return '<div class="metric-card"><div class="metric-label">' + esc(label) + '</div>' +
+  /** 白话解释小圆点（点开显示，最多用 6 处，别满屏都是）。 */
+  function infoDot(text) {
+    return '<button type="button" class="info-dot" aria-label="这是什么意思" data-tip="' + esc(text) + '">ⓘ</button>';
+  }
+
+  function metricCard(label, value, tip) {
+    return '<div class="metric-card"><div class="metric-label">' + esc(label) +
+      (tip ? infoDot(tip) : '') + '</div>' +
       '<div class="metric-value">' + esc(value) + '</div></div>';
   }
 
@@ -418,12 +462,30 @@
     (result.nodes || []).forEach(function (rn) {
       var src = srcById[rn.id];
       if (!src || src.kind !== 'building') return;
-      var floors = (src.building && src.building.floors) || 0;
+      var b = src.building || {};
+      var floors = b.floors || 0;
       var served = WC.ui.networkMap.servedFloors(rn.pressure, target.settings);
       var status = served >= floors ? 'ok' : (floors - served === 1 ? 'warn' : 'bad');
-      rows.push({ id: rn.id, floors: floors, served: served, pressure: rn.pressure, elev: src.elev, status: status });
+      rows.push({
+        id: rn.id, floors: floors, served: served, pressure: rn.pressure,
+        elev: src.elev, status: status, demand: src.demand || 0,
+        people: b.people || 0, households: b.households || 0
+      });
     });
     return rows;
+  }
+
+  /**
+   * 结论统计口径：楼栋节点 ≤ 6 且填了人数 → 按「栋楼」；
+   * 否则（例如 3 栋 × 5 个楼层测点、没填人数）按「用水点」（只数有需水量的点）。
+   */
+  function verdictScope(target, result) {
+    var rows = reportRows(target, result);
+    if (!rows.length) return { rows: [], unit: '处', isBuilding: false };
+    var hasPeople = rows.some(function (r) { return r.people > 0; });
+    if (rows.length <= 6 && hasPeople) return { rows: rows, unit: '栋楼', isBuilding: true };
+    var active = rows.filter(function (r) { return r.demand > 0; });
+    return { rows: active.length ? active : rows, unit: '个用水点', isBuilding: false };
   }
 
   /** 全部达标：有楼栋按「可服务层数 ≥ 实际层数」，无楼栋按「自由水压 ≥ 6 层服务水头」。 */
@@ -455,18 +517,19 @@
   /** 大字结论（两种模板）。 */
   function buildVerdict(target, result) {
     var sh = serviceHeadTable(target);
-    var rows = reportRows(target, result);
-    var worst = worstPoint(target, result);
-    var pass = allPass(target, result);
+    var scope = verdictScope(target, result);
+    var rows = scope.rows;
+    var worst = rows.length ? rows.reduce(function (a, b) { return b.pressure < a.pressure ? b : a; }) : worstPoint(target, result);
+    var pass = rows.length ? rows.every(function (r) { return r.status === 'ok'; }) : allPass(target, result);
     if (rows.length) {
       if (pass) {
         var need = sh[Math.min(worst.floors, 6)] || sh[6];
-        return { tone: 'ok', big: rows.length + ' 栋楼全部达标，最不利的 ' + worst.id + ' 仍有 ' + (worst.pressure - need).toFixed(1) + ' m 余量' };
+        return { tone: 'ok', big: rows.length + ' ' + scope.unit + '全部达标，最不利的 ' + worst.id + ' 仍有 ' + (worst.pressure - need).toFixed(1) + ' m 余量' };
       }
       var bad = rows.filter(function (r) { return r.status !== 'ok'; });
       var head = bad.length === rows.length
-        ? rows.length + ' 栋楼全部不达标'
-        : rows.length + ' 栋楼中有 ' + bad.length + ' 栋不达标';
+        ? rows.length + ' ' + scope.unit + '全部不达标'
+        : rows.length + ' ' + scope.unit + '中有 ' + bad.length + ' ' + scope.unit + '不达标';
       return { tone: 'bad', big: head + '，最差的是 ' + worst.id + '：' + worst.floors + ' 层只能供到 ' + worst.served + ' 层' };
     }
     if (pass) {
@@ -551,7 +614,8 @@
   /** 方案的预期结果：最低水压 + 达标数 + 绿/橙标注。 */
   function planOutcome(target, after) {
     var sh = serviceHeadTable(target);
-    var rows = reportRows(target, after);
+    var scope = verdictScope(target, after);
+    var rows = scope.rows;
     var total, ok, minP;
     if (rows.length) {
       total = rows.length;
@@ -563,7 +627,7 @@
       ok = pts.filter(function (rn) { return rn.pressure >= sh[6]; }).length;
       minP = pts.length ? Math.min.apply(null, pts.map(function (rn) { return rn.pressure; })) : 0;
     }
-    var unit = rows.length ? '栋' : '个点';
+    var unit = rows.length ? scope.unit : '个点';
     return {
       minPressure: minP, ok: ok, total: total, unit: unit,
       okBadge: ok === total,
@@ -724,7 +788,8 @@
       resultBox.style.display = '';
       resultBox.innerHTML = '';
 
-      var rows = reportRows(target, r);
+      var scope = verdictScope(target, r);
+      var rows = scope.rows;
       var verdict = buildVerdict(target, r);
       var diags = buildDiagnoses(target, r);
       var view = shownPlan ? shownPlan.view : target; // 预览时图上显示改过的数据（如 DN150、新水头）
@@ -749,7 +814,9 @@
       /* ① 体检结论卡（管网图上方）：大字结论 + 诊断 + 改造方案 */
       var card = document.createElement('div');
       card.className = 'verdict-card verdict-' + verdict.tone;
-      var html = '<div class="verdict-big">' + esc(verdict.big) + '</div>';
+      var html = '<div class="verdict-head"><div class="verdict-big">' + esc(verdict.big) + '</div>' +
+        infoDot('达标 = 能供到的层数 ≥ 实际层数。层数按服务水头表查：1 层 10 m、2 层 12 m、3 层 16 m、4 层 20 m、5 层 24 m、6 层 28 m。') +
+        '</div>';
       if (diags.length) {
         html += '<ul class="verdict-diags">' + diags.map(function (d) {
           return '<li><b>' + esc(d.title) + '</b><span>' + esc(d.text) + '</span></li>';
@@ -802,8 +869,10 @@
       tableWrap.className = 'report-table-wrap';
       var tableHtml;
       if (rows.length) {
-        tableHtml = '<h4>楼栋水压表</h4><table class="report-table"><thead><tr>' +
-          '<th>楼栋</th><th>层数</th><th>当前能供到</th><th>自由水压</th><th>状态</th></tr></thead><tbody>';
+        tableHtml = '<h4>' + (scope.isBuilding ? '楼栋水压表' : '用水点水压表') + '</h4><table class="report-table"><thead><tr>' +
+          '<th>' + (scope.isBuilding ? '楼栋' : '用水点') + '</th><th>层数</th>' +
+          '<th>当前能供到' + infoDot('拿这栋楼的自由水压去查服务水头表，能到第几层就写第几层；比如 13.9 m 只够 2 层。') + '</th>' +
+          '<th>自由水压' + infoDot('自由水压 = 水头 − 地面标高；6 层需要 28 m 才够。') + '</th><th>状态</th></tr></thead><tbody>';
         rows.forEach(function (row) {
           var pill = row.status === 'ok' ? ['pill-ok', '达标'] :
             (row.status === 'warn' ? ['pill-warn', '差1层'] : ['pill-bad', '差2层以上']);
@@ -836,9 +905,9 @@
       metrics.className = 'calc-metrics';
       metrics.innerHTML =
         metricCard('迭代次数', r.iterations + ' 次') +
-        metricCard('最大环闭合差', fmtExp(r.maxLoopResidual) + ' m') +
-        metricCard('最大连续性残差', fmtExp(r.maxContinuity) + ' L/s') +
-        metricCard('总需水量', r.totalDemand.toFixed(2) + ' L/s');
+        metricCard('最大环闭合差', fmtExp(r.maxLoopResidual) + ' m', '每轮修正后各环剩下的压力差；越接近 0，说明流量分得越准。') +
+        metricCard('最大连续性残差', fmtExp(r.maxContinuity) + ' L/s', '每个节点进出水量的差；接近 0 说明没有凭空多水或少水。') +
+        metricCard('总需水量', r.totalDemand.toFixed(2) + ' L/s', '所有楼栋和用水点的流量加起来，也就是水源要供的量。');
       resultBox.appendChild(metrics);
 
       /* 点位详情 + 表↔图互高亮 */
@@ -881,6 +950,21 @@
       WC.ui.networkMap.render(mapHost, view, r);
     }
 
+    /** 计算失败：红条写清原因，并给一个「回到数据」的出口。 */
+    function showCalcError(msg) {
+      errorBox.innerHTML = '<span class="calc-error-msg">' + esc('计算失败：' + msg) + '</span>';
+      var back = document.createElement('button');
+      back.type = 'button';
+      back.className = 'btn btn-ghost btn-sm';
+      back.textContent = '回到数据';
+      back.addEventListener('click', function () {
+        var isSample = !!samples.byId(target.id);
+        navigate(isSample ? '#/project/' : '#/edit/' + encodeURIComponent(target.id));
+      });
+      errorBox.appendChild(back);
+      errorBox.style.display = '';
+    }
+
     /** 正式体检：算原始结果 + 生成改造方案，渲染报告（试算只在副本上做，永不写 store）。 */
     function showOriginal(r) {
       original = r;
@@ -890,19 +974,26 @@
     }
 
     function runCalc() {
+      // 已经算过且数据没变：直接复用，连点不会重复求解
+      if (original) {
+        issuesBox.style.display = 'none';
+        errorBox.style.display = 'none';
+        showOriginal(original);
+        return;
+      }
       try {
         var r = WC.solver.solve(target);
+        WC.calcRunCount = (WC.calcRunCount || 0) + 1;
         resultCache[target.id] = { result: r, ts: Date.now() };
         if (persist) {
           target.calcAt = Date.now();
-          store.save(target);
+          try { store.save(target); } catch (e2) { /* 存储失败已有横幅提示 */ }
         }
         issuesBox.style.display = 'none';
         errorBox.style.display = 'none';
         showOriginal(r);
       } catch (e) {
-        errorBox.textContent = '计算失败：' + (e && e.message ? e.message : '未知错误');
-        errorBox.style.display = '';
+        showCalcError(e && e.message ? e.message : '未知错误');
       }
     }
 
@@ -1192,7 +1283,15 @@
     catch (e) {
       var eb = document.createElement('section');
       eb.className = 'card calc-error';
-      eb.textContent = '计算失败：' + (e && e.message ? e.message : '未知错误');
+      eb.innerHTML = '<span class="calc-error-msg">' + esc('计算失败：' + (e && e.message ? e.message : '未知错误')) + '</span>';
+      var ebBack = document.createElement('button');
+      ebBack.type = 'button';
+      ebBack.className = 'btn btn-ghost btn-sm';
+      ebBack.textContent = '回到数据';
+      ebBack.addEventListener('click', function () {
+        navigate(samples.byId(target.id) ? '#/project/' : '#/edit/' + encodeURIComponent(target.id));
+      });
+      eb.appendChild(ebBack);
       page.appendChild(eb);
       root.appendChild(page);
       return;
@@ -1337,7 +1436,15 @@
     catch (e) {
       var eb = document.createElement('section');
       eb.className = 'card calc-error';
-      eb.textContent = '计算失败：' + (e && e.message ? e.message : '未知错误');
+      eb.innerHTML = '<span class="calc-error-msg">' + esc('计算失败：' + (e && e.message ? e.message : '未知错误')) + '</span>';
+      var ebBack = document.createElement('button');
+      ebBack.type = 'button';
+      ebBack.className = 'btn btn-ghost btn-sm';
+      ebBack.textContent = '回到数据';
+      ebBack.addEventListener('click', function () {
+        navigate(samples.byId(target.id) ? '#/project/' : '#/edit/' + encodeURIComponent(target.id));
+      });
+      eb.appendChild(ebBack);
       page.appendChild(eb);
       root.appendChild(page);
       return;
@@ -1370,15 +1477,19 @@
     var sh = serviceHeadTable(target);
     var w = target.water || {};
 
-    /* —— 一、工程概况 —— */
-    var qd = ((w.population || 0) * (w.quota || 0)) / 1000;
-    var qh = qd * (w.kh || 0) / 24;
+    /* —— 一、工程概况（人数/定额可能是 NaN 或空，先兜底再算） —— */
+    var popN = Number(w.population), quotaN = Number(w.quota), khN = Number(w.kh);
+    if (!isFinite(popN)) popN = 0;
+    if (!isFinite(quotaN)) quotaN = 0;
+    if (!isFinite(khN)) khN = 0;
+    var qd = (popN * quotaN) / 1000;
+    var qh = qd * khN / 24;
     var html = '<article class="report-doc">' +
       '<h1>供水管网水力计算书</h1>' +
       '<p class="rp-sub">工程名称：' + esc(res.name) + ' · 计算日期：' + dateStr + '</p>' +
       '<section class="rp-sec"><h2>一、工程概况</h2>' +
-      '<p>用水人口 ' + (w.population || 0) + ' 人；综合生活用水定额 q = ' + (w.quota || 0) +
-      ' L/(人·d)；时变化系数 Kh = ' + (w.kh || 0) + '。</p>' +
+      '<p>用水人口 ' + popN + ' 人；综合生活用水定额 q = ' + quotaN +
+      ' L/(人·d)；时变化系数 Kh = ' + khN + '。</p>' +
       '<p>最高日用水量 Qd = q×N/1000 = ' + qd.toFixed(2) + ' m³/d；最高时用水量 Qh = Qd×Kh/24 = ' +
       qh.toFixed(2) + ' m³/h；折算流量 Qh/3.6 = ' + (qh / 3.6).toFixed(2) + ' L/s；' +
       '平差总需水量 ' + r.totalDemand.toFixed(2) + ' L/s。</p></section>';
@@ -1427,13 +1538,14 @@
           return esc(p.id) + '（' + Math.abs(p.v).toFixed(2) + ' m/s）';
         }).join('、') + ' 流速超过 ' + vMax + ' m/s'
       : '<span class="pill pill-ok">满足</span> 全部管段流速不超过 ' + vMax + ' m/s';
-    var rowsB = reportRows(target, r);
+    var scopeB = verdictScope(target, r);
+    var rowsB = scopeB.rows;
     var worst = worstPoint(target, r);
     var pressLine;
     if (rowsB.length) {
       pressLine = allPass(target, r)
-        ? '<span class="pill pill-ok">满足</span> 全部 ' + rowsB.length + ' 栋楼可服务层数达到实际层数，最不利点 ' + esc(worst.id) + ' 自由水压 ' + worst.pressure.toFixed(2) + ' m'
-        : '<span class="pill pill-bad">不满足</span> 最不利点 ' + esc(worst.id) + ' 自由水压 ' + worst.pressure.toFixed(2) + ' m，按服务水头表只够 ' + servedText(worst.served) + '（差 ' + (rowsB.filter(function (x) { return x.status !== 'ok'; }).length) + ' 栋楼）';
+        ? '<span class="pill pill-ok">满足</span> 全部 ' + rowsB.length + ' ' + scopeB.unit + '可服务层数达到实际层数，最不利点 ' + esc(worst.id) + ' 自由水压 ' + worst.pressure.toFixed(2) + ' m'
+        : '<span class="pill pill-bad">不满足</span> 最不利点 ' + esc(worst.id) + ' 自由水压 ' + worst.pressure.toFixed(2) + ' m，按服务水头表只够 ' + servedText(worst.served) + '（差 ' + (rowsB.filter(function (x) { return x.status !== 'ok'; }).length) + ' ' + scopeB.unit + '）';
     } else {
       pressLine = allPass(target, r)
         ? '<span class="pill pill-ok">满足</span> 各点自由水压均不低于 6 层服务水头 ' + sh[6] + ' m'
@@ -3044,6 +3156,18 @@
     if (!root) return;
     root.className = 'app-shell';
     window.addEventListener('hashchange', render);
+
+    // 白话解释小圆点：点一下展开，点别处收起（事件委托，重渲染后依然有效）
+    root.addEventListener('click', function (ev) {
+      var dot = ev.target && ev.target.closest ? ev.target.closest('.info-dot') : null;
+      var opened = root.querySelectorAll('.info-dot.is-open');
+      Array.prototype.forEach.call(opened, function (d) { if (d !== dot) d.classList.remove('is-open'); });
+      if (dot) {
+        ev.preventDefault();
+        dot.classList.toggle('is-open');
+      }
+    });
+
     render();
   }
 
