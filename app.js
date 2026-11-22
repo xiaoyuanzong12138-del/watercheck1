@@ -200,6 +200,7 @@
     page.appendChild(buildHero());
     page.appendChild(buildScrolly());
     page.appendChild(buildFixes());
+    page.appendChild(buildChecker());
     page.appendChild(buildShowcase());
     var guide = buildGuide();
     if (guide) page.appendChild(guide);
@@ -359,6 +360,191 @@
     bar.className = 'topbar home-bar';
     bar.innerHTML = '<span class="home-brand">水压体检</span>';
     return bar;
+  }
+
+  /** 30 秒自查：三步问答 → 结论卡（不录管网）。数字取自 settings.serviceHead 默认表。 */
+  function buildChecker() {
+    var sec = document.createElement('section');
+    sec.className = 'checker';
+
+    /* 服务水头表：与 store.create() 的默认 settings.serviceHead 一致（1→10 … 6→28 m） */
+    var SH = serviceHeadTable({ settings: {} });
+    var need = function (n) { return n <= 6 ? (SH[n] || 28) : 10 + 4 * (n - 1); };
+
+    var head = document.createElement('div');
+    head.className = 'checker-head';
+    head.innerHTML = '<h2 class="checker-title">没有管网数据？30 秒自查</h2>' +
+      '<p class="checker-sub">回答三个问题，先判断你这栋楼大概是什么情况</p>';
+    sec.appendChild(head);
+
+    var state = { floors: null, supply: null, status: null };
+
+    var steps = [
+      {
+        key: 'floors', q: '1. 这栋楼几层？', opts: [
+          { v: '1-6', t: '1–6 层' }, { v: '7-11', t: '7–11 层' },
+          { v: '12-18', t: '12–18 层' }, { v: '19+', t: '19 层以上' }
+        ]
+      },
+      {
+        key: 'supply', q: '2. 水是怎么上楼的？', opts: [
+          { v: 'direct', t: '市政直供（没有水箱、没有泵）' },
+          { v: 'tank', t: '有楼顶水箱或二次供水' },
+          { v: 'unknown', t: '不知道' }
+        ]
+      },
+      {
+        key: 'status', q: '3. 高层现在什么情况？', opts: [
+          { v: 'low', t: '水很小、高峰期没水' },
+          { v: 'normal', t: '一直正常' },
+          { v: 'unknown', t: '不确定' }
+        ]
+      }
+    ];
+
+    var groups = [];
+    steps.forEach(function (st) {
+      var row = document.createElement('div');
+      row.className = 'chk-step';
+      var q = document.createElement('p');
+      q.className = 'chk-q';
+      q.textContent = st.q;
+      var opts = document.createElement('div');
+      opts.className = 'chk-opts';
+      st.opts.forEach(function (o) {
+        var b = document.createElement('button');
+        b.type = 'button';
+        b.className = 'chk-opt';
+        b.textContent = o.t;
+        b.setAttribute('data-v', o.v);
+        b.addEventListener('click', function () {
+          state[st.key] = o.v;
+          Array.prototype.forEach.call(opts.children, function (x) {
+            var on = x === b;
+            x.classList.toggle('is-on', on);
+            x.setAttribute('aria-pressed', on ? 'true' : 'false');
+          });
+          maybeShow();
+        });
+        opts.appendChild(b);
+      });
+      row.appendChild(q);
+      row.appendChild(opts);
+      sec.appendChild(row);
+      groups.push(opts);
+    });
+
+    var result = document.createElement('div');
+    result.className = 'chk-result';
+    result.hidden = true;
+    sec.appendChild(result);
+
+    var shownKey = '';
+
+    function decide() {
+      var f = state.floors, s = state.supply, t = state.status;
+      var unknown = s === 'unknown' || t === 'unknown';
+
+      /* 规则优先级：19 层以上（任意）> 市政直供 1–6 层水小 > 市政直供 7 层以上
+         > 二次供水且水小 > 一直正常；任一「不知道/不确定」再加一句提示 */
+      if (f === '19+') {
+        return {
+          title: '19 层以上必须分区供水，需要逐区核算',
+          basis: '19 层按每层 4 m 估算要 ' + need(19) + ' m 以上，一套泵供不到顶',
+          steps: ['确认分区方案', '每区单独做管网体检'],
+          unknown: unknown
+        };
+      }
+      if (s === 'direct' && f === '1-6' && t === 'low') {
+        return {
+          title: '大概率是入口压力不足',
+          basis: '6 层要 ' + SH[6] + ' m 服务水头，市政一般只给到 18–24 m',
+          steps: ['让物业测最不利点压力', '加装增压泵（示例中加压到 32.5 m 后 6 层全达标）'],
+          unknown: unknown
+        };
+      }
+      if (s === 'direct' && f && f !== '1-6') {
+        return {
+          title: '7 层以上市政直供基本不够，需要二次供水',
+          basis: '7 层要 ' + need(7) + ' m、18 层要 ' + need(18) + ' m 服务水头，市政直供一般到不了',
+          steps: ['查是否已有水箱 / 泵房', '按分区供水核算（示例里 18 层需要 ' + need(18) + ' m）'],
+          unknown: unknown
+        };
+      }
+      if (s === 'tank' && t === 'low') {
+        return {
+          title: '问题更可能在加压设备或管网老化',
+          basis: '有二次供水还水小，说明楼内加压或管道有问题；正常管网 C 值应在 100 以上',
+          steps: ['查泵是否正常运行', '测末端压力', '管网 C 值可能已低于 100'],
+          unknown: unknown
+        };
+      }
+      if (t === 'normal') {
+        return {
+          title: '目前没有明显问题',
+          basis: '自由水压够 6 层（≥' + SH[6] + ' m）时一般不会出现水小',
+          steps: ['可以做一次完整体检留个基线'],
+          unknown: unknown
+        };
+      }
+      return {
+        title: '信息还不够，先确认供水方式和水压',
+        basis: '6 层要 ' + SH[6] + ' m 服务水头，先确认这两项再判断',
+        steps: ['问物业有没有水箱 / 泵房', '让物业测一次最不利点压力'],
+        unknown: true
+      };
+    }
+
+    function floorLabel() {
+      var map = { '1-6': '1–6 层', '7-11': '7–11 层', '12-18': '12–18 层', '19+': '19 层以上' };
+      return map[state.floors] || '层数未知';
+    }
+    function supplyLabel() {
+      var map = { direct: '市政直供', tank: '二次供水', unknown: '供水方式未知' };
+      return map[state.supply] || '供水方式未知';
+    }
+
+    function maybeShow() {
+      if (!state.floors || !state.supply || !state.status) return;
+      var d = decide();
+      var key = d.title + '|' + d.unknown;
+      if (key === shownKey) return;
+      shownKey = key;
+
+      var html = '<p class="chk-verdict">' + esc(d.title) + '</p>' +
+        '<p class="chk-basis">依据：' + esc(d.basis) + '</p>';
+      if (d.unknown) html += '<p class="chk-hint">建议先让物业确认这一项，结果会更准。</p>';
+      html += '<ol class="chk-next">' + d.steps.map(function (x) { return '<li>' + esc(x) + '</li>'; }).join('') + '</ol>';
+
+      var acts = document.createElement('div');
+      acts.className = 'chk-acts';
+      var mk = document.createElement('button');
+      mk.type = 'button';
+      mk.className = 'btn btn-primary';
+      mk.textContent = '按这个结论建一份体检 →';
+      mk.addEventListener('click', function () {
+        var p = store.create('小区体检 · ' + floorLabel() + ' · ' + supplyLabel());
+        p.note = '自查结论：' + d.title + '；层数：' + floorLabel() + '；供水方式：' + supplyLabel();
+        store.save(p);
+        location.hash = '#/edit/' + p.id;
+      });
+      var demo = document.createElement('a');
+      demo.className = 'btn';
+      demo.href = '#/project/sample-liuceng-muzhi';
+      demo.textContent = '先看一份完整示例 →';
+      acts.appendChild(mk);
+      acts.appendChild(demo);
+
+      result.innerHTML = html;
+      result.appendChild(acts);
+      result.hidden = false;
+      if (result.classList.contains('is-on')) {
+        result.classList.remove('is-on');
+      }
+      requestAnimationFrame(function () { result.classList.add('is-on'); });
+    }
+
+    return sec;
   }
 
   /** 水压不够，怎么办：三张方案卡（全部数字来自实时试算）。 */
