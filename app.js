@@ -1195,10 +1195,12 @@
       var gap = (need + friction) - entry;                      // 缺口 = 服务水头 + 损失 − 入口压力
       if (gap > 0 && friction < gap) {
         out.push({
+          key: 'pressure',
           title: '入口压力不足',
           text: '入口 ' + entry.toFixed(1) + ' m，全程水头损失只有 ' + Math.max(friction, 0).toFixed(1) +
             ' m，而 ' + floors + ' 层需要 ' + need + ' m，缺了 ' + gap.toFixed(1) +
-            ' m —— 问题在压力，不在管子。'
+            ' m —— 问题在压力，不在管子。',
+          facts: { entry: entry, friction: Math.max(friction, 0), need: need, gap: gap, floors: floors }
         });
       }
     }
@@ -1211,21 +1213,102 @@
       var names = hot.map(function (p) {
         return p.id + '（流速 ' + Math.abs(p.v).toFixed(2) + ' m/s，建议扩到 DN' + suggestDN(p.qLs, p.D) + '）';
       }).join('、');
-      out.push({ title: '管径偏小', text: names + '：这几段流速偏高，水头损失大。' });
+      out.push({ key: 'velocity', title: '管径偏小', text: names + '：这几段流速偏高，水头损失大。' });
     }
 
     /* —— ③ 管材老化：C < 100 —— */
     var old = (result.pipes || []).filter(function (p) { return p.C < 100; });
     if (old.length) {
-      out.push({ title: '管材老化', text: '有 ' + old.length + ' 条管段 C 值 <100（内壁结垢严重，阻力偏大）。' });
+      out.push({
+        key: 'aging',
+        title: '管材老化',
+        text: '有 ' + old.length + ' 条管段 C 值 <100（内壁结垢严重，阻力偏大）。',
+        facts: { pipes: old }
+      });
     }
 
     /* —— ④ 环网未成环：枝状无备用通路 —— */
     if ((result.cycles || []).length === 0 && (target.nodes || []).length > 3) {
-      out.push({ title: '环网未成环', text: '这是枝状管网，没有备用通路，一处检修整片停水。' });
+      var pN = (target.nodes || []).length, pM = (result.pipes || []).length;
+      out.push({
+        key: 'branch',
+        title: '环网未成环',
+        text: '这是枝状管网，没有备用通路，一处检修整片停水。',
+        facts: { nodes: pN, pipes: pM, cycles: pM - pN + 1 }
+      });
     }
 
     return out.slice(0, 3);
+  }
+
+  /** 「依据」面板：把这条结论背后的数字摊开（不写死任何数）。 */
+  function buildEvidence(kind, ctx, d) {
+    var sh = serviceHeadTable(ctx.target);
+    var html = '';
+
+    if (kind === 'verdict') {
+      var sc = verdictScope(ctx.target, ctx.result);
+      var w = sc.rows.length
+        ? sc.rows.reduce(function (a, b) { return b.pressure < a.pressure ? b : a; })
+        : worstPoint(ctx.target, ctx.result);
+      if (!w) return '<p class="ev-note">暂无结果</p>';
+      var p = w.pressure, served = w.served;
+      var expr;
+      if (served >= 6) {
+        expr = p.toFixed(1) + ' ≥ ' + sh[6] + ' → ≥6 层';
+      } else if (served <= 0) {
+        expr = p.toFixed(1) + ' < ' + sh[1] + ' → 0 层（不足 1 层）';
+      } else {
+        expr = sh[served] + ' ≤ ' + p.toFixed(1) + ' < ' + sh[served + 1] + ' → 只能供到 ' + served + ' 层';
+      }
+      html = '<p class="ev-title">这一层是怎么判出来的？</p>' +
+        '<p class="ev-item">· 最不利点：' + esc(w.id) + '（自由水压 ' + p.toFixed(1) + ' m）</p>' +
+        '<p class="ev-item">· 查服务水头表：' + [1, 2, 3, 4, 5, 6].map(function (n) {
+          return n + ' 层 ' + sh[n] + ' m';
+        }).join(' / ') + '</p>' +
+        '<p class="ev-item">· 判定：' + expr + '</p>' +
+        '<p class="ev-note">服务水头取「最小服务水头」，实际工程需按地方标准复核。</p>';
+      return html;
+    }
+
+    if (kind === 'pressure' && d && d.facts) {
+      var f = d.facts;
+      var sum = f.need + f.friction;
+      html = '<p class="ev-title">缺口是怎么算的？</p>' +
+        '<div class="ev-calc">' +
+        '<div>需要的水头 = 服务水头 + 全程水头损失 = ' + f.need.toFixed(1) + ' + ' + f.friction.toFixed(1) + ' = ' + sum.toFixed(1) + ' m</div>' +
+        '<div>现有水头 = 入口压力 = ' + f.entry.toFixed(1) + ' m</div>' +
+        '<div>缺口 = ' + sum.toFixed(1) + ' − ' + f.entry.toFixed(1) + ' = ' + f.gap.toFixed(1) + ' m</div>' +
+        '</div>' +
+        '<p class="ev-note">水头损失由各管段沿程损失累加（海澄-威廉公式），不是估算值。</p>';
+      return html;
+    }
+
+    if (kind === 'aging' && d && d.facts) {
+      var ps = d.facts.pipes.slice().sort(function (a, b) { return a.C - b.C; });
+      var shown = ps.slice(0, 10);
+      html = '<p class="ev-title">哪些管段的 C 值偏低？</p>' +
+        '<div class="ev-table">' +
+        shown.map(function (p) {
+          return '<div class="ev-tr"><span>' + esc(p.id) + '</span><span>DN' + p.D + '</span>' +
+            '<span>C=' + p.C + '</span><span>损失 ' + Math.abs(p.h).toFixed(2) + ' m</span></div>';
+        }).join('') +
+        '</div>' +
+        (ps.length > 10 ? '<p class="ev-item">共 ' + ps.length + ' 条，此处列前 10 条</p>' : '') +
+        '<p class="ev-note">C 值越低代表内壁越粗糙、阻力越大；旧铸铁常在 90–110，新管 130 左右。</p>';
+      return html;
+    }
+
+    if (kind === 'branch' && d && d.facts) {
+      var b = d.facts;
+      html = '<p class="ev-title">为什么说是枝状管网？</p>' +
+        '<p class="ev-item">· 节点 ' + b.nodes + ' 个、管段 ' + b.pipes + ' 条</p>' +
+        '<p class="ev-item">· 独立环数 = ' + b.pipes + ' − ' + b.nodes + ' + 1 = ' + b.cycles + '</p>' +
+        '<p class="ev-note">环数 0 表示没有备用通路，任意一处检修都会导致下游停水。</p>';
+      return html;
+    }
+
+    return '<p class="ev-note">暂无依据</p>';
   }
 
   /** 建议管径：按目标流速 1.0 m/s 反算，取 50 mm 整数档里刚够的一档（必须比现管径大）。 */
@@ -1451,11 +1534,21 @@
       var card = document.createElement('div');
       card.className = 'verdict-card verdict-' + verdict.tone;
       var html = '<div class="verdict-head"><div class="verdict-big">' + esc(verdict.big) + '</div>' +
+        '<button type="button" class="ev-btn" data-ev="verdict" aria-expanded="false">依据</button>' +
         infoDot('达标 = 能供到的层数 ≥ 实际层数。层数按服务水头表查：1 层 10 m、2 层 12 m、3 层 16 m、4 层 20 m、5 层 24 m、6 层 28 m。') +
-        '</div>';
+        '</div>' +
+        '<div class="ev-panel" data-panel="verdict" aria-hidden="true">' + buildEvidence('verdict', { target: target, result: r }) + '</div>';
       if (diags.length) {
-        html += '<ul class="verdict-diags">' + diags.map(function (d) {
-          return '<li><b>' + esc(d.title) + '</b><span>' + esc(d.text) + '</span></li>';
+        html += '<ul class="verdict-diags">' + diags.map(function (d, i) {
+          var hasEv = d.key === 'pressure' || d.key === 'aging' || d.key === 'branch';
+          return '<li' + (hasEv ? ' class="has-ev"' : '') + '>' +
+            '<div class="diag-head"><b>' + esc(d.title) + '</b>' +
+            (hasEv ? '<button type="button" class="ev-btn" data-ev="d' + i + '" aria-expanded="false">依据</button>' : '') +
+            '</div>' +
+            '<span>' + esc(d.text) + '</span>' +
+            (hasEv ? '<div class="ev-panel" data-panel="d' + i + '" aria-hidden="true">' +
+              buildEvidence(d.key, { target: target, result: r }, d) + '</div>' : '') +
+            '</li>';
         }).join('') + '</ul>';
       }
       if (plans.length) {
@@ -1476,6 +1569,33 @@
       }
       html += '<p class="verdict-note">基于恒定流平差计算，改造方案仅供参考，实施请由有资质单位复核。</p>';
       card.innerHTML = html;
+
+      /* 「依据」展开/收起：同一时刻只开一个 */
+      var openBtn = null, openPanel = null;
+      function closeEv() {
+        if (!openPanel) return;
+        openPanel.style.maxHeight = '0px';
+        openPanel.classList.remove('is-open');
+        openPanel.setAttribute('aria-hidden', 'true');
+        openBtn.setAttribute('aria-expanded', 'false');
+        openBtn = null;
+        openPanel = null;
+      }
+      Array.prototype.forEach.call(card.querySelectorAll('.ev-btn'), function (btn) {
+        btn.addEventListener('click', function () {
+          var key = btn.getAttribute('data-ev');
+          var panel = card.querySelector('.ev-panel[data-panel="' + key + '"]');
+          if (!panel) return;
+          if (btn === openBtn) { closeEv(); return; }
+          closeEv();
+          openBtn = btn;
+          openPanel = panel;
+          btn.setAttribute('aria-expanded', 'true');
+          panel.setAttribute('aria-hidden', 'false');
+          panel.classList.add('is-open');
+          panel.style.maxHeight = (panel.scrollHeight + 8) + 'px';
+        });
+      });
 
       /* 结论卡 + 右侧楼层剖面图（没有楼栋节点的工程不画） */
       var verdictRow = document.createElement('div');

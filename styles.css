@@ -1142,9 +1142,12 @@ button { font-family: inherit; font-size: inherit; }
 /* 诊断列表 */
 .verdict-diags { list-style: none; margin: var(--sp-3) 0 0; padding: 0; display: grid; gap: 6px; }
 .verdict-diags li {
-  display: flex; gap: 8px; align-items: baseline;
+  display: block;
+  min-width: 0;
   font-size: var(--fs-13); color: var(--ink); line-height: 1.55;
 }
+.diag-head { display: flex; gap: 8px; align-items: center; }
+.verdict-diags li > span { display: block; margin-top: 4px; }
 .verdict-diags li b {
   flex: none;
   font-size: var(--fs-12);
@@ -1155,6 +1158,56 @@ button { font-family: inherit; font-size: inherit; }
   padding: 1px 8px;
   white-space: nowrap;
 }
+
+/* 「依据」按钮与内联面板 */
+.ev-btn {
+  flex: none;
+  margin-left: auto;
+  padding: 2px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: #fff;
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.5;
+  cursor: pointer;
+  transition: border-color .18s ease, color .18s ease, background .18s ease;
+}
+.ev-btn:hover { border-color: var(--brand); color: var(--brand); background: #F4F9FF; }
+.ev-btn:active { transform: translateY(1px); }
+.ev-btn:focus-visible { outline: 3px solid #7FB3F0; outline-offset: 2px; }
+.ev-btn[aria-expanded="true"] { border-color: var(--brand); color: var(--brand); background: #EAF3FF; }
+.ev-panel {
+  max-height: 0;
+  overflow: hidden;
+  opacity: 0;
+  transition: max-height .25s ease, opacity .25s ease;
+}
+.ev-panel.is-open { opacity: 1; }
+.ev-title { margin: 10px 0 6px; font-size: 14px; font-weight: 600; color: var(--ink); }
+.ev-item { margin: 2px 0; font-size: 14px; line-height: 1.7; color: var(--ink-2); }
+.ev-calc {
+  margin: 8px 0 0;
+  max-width: 100%;
+  padding: 8px 10px;
+  border-radius: var(--radius-xs);
+  background: #F5F9FE;
+  font: 13px/1.9 ui-monospace, Consolas, "Courier New", monospace;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow-x: auto;
+}
+.ev-table { margin: 8px 0 0; display: grid; gap: 2px; }
+.ev-tr {
+  display: grid;
+  grid-template-columns: 64px 64px 64px minmax(80px, 1fr);
+  gap: 6px;
+  font-size: 13px;
+  color: var(--ink-2);
+  padding: 2px 0;
+  border-bottom: 1px dashed var(--line);
+}
+.ev-note { margin: 8px 0 0; font-size: 12px; line-height: 1.6; color: var(--muted); }
 
 /* 改造方案行 */
 .verdict-plans { margin-top: var(--sp-3); display: grid; gap: 8px; }
