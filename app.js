@@ -1535,9 +1535,11 @@
       card.className = 'verdict-card verdict-' + verdict.tone;
       var html = '<div class="verdict-head"><div class="verdict-big">' + esc(verdict.big) + '</div>' +
         '<button type="button" class="ev-btn" data-ev="verdict" aria-expanded="false">依据</button>' +
+        '<button type="button" class="share-btn">生成分享图</button>' +
         infoDot('达标 = 能供到的层数 ≥ 实际层数。层数按服务水头表查：1 层 10 m、2 层 12 m、3 层 16 m、4 层 20 m、5 层 24 m、6 层 28 m。') +
         '</div>' +
-        '<div class="ev-panel" data-panel="verdict" aria-hidden="true">' + buildEvidence('verdict', { target: target, result: r }) + '</div>';
+        '<div class="ev-panel" data-panel="verdict" aria-hidden="true">' + buildEvidence('verdict', { target: target, result: r }) + '</div>' +
+        '<p class="share-msg" hidden></p>';
       if (diags.length) {
         html += '<ul class="verdict-diags">' + diags.map(function (d, i) {
           var hasEv = d.key === 'pressure' || d.key === 'aging' || d.key === 'branch';
@@ -1571,6 +1573,10 @@
       card.innerHTML = html;
 
       /* 「依据」展开/收起：同一时刻只开一个 */
+      var shareBtn = card.querySelector('.share-btn');
+      if (shareBtn) {
+        shareBtn.addEventListener('click', function () { exportShareCard(target, r, card); });
+      }
       var openBtn = null, openPanel = null;
       function closeEv() {
         if (!openPanel) return;
@@ -2381,6 +2387,186 @@
   }
 
   /* ==================== 体检页：楼层剖面图（静态 SVG，不带动画） ==================== */
+
+  /** 分享卡片：1200×1500 PNG，浏览器内 Canvas 现画。所有数字来自当前求解结果。 */
+  function shareFacts(target, result) {
+    var sh = serviceHeadTable(target);
+    var w = worstPoint(target, result);
+    var src = null;
+    (target.nodes || []).forEach(function (n) {
+      if ((n.head || 0) > 0 && (!src || (n.head || 0) > (src.head || 0))) src = n;
+    });
+    var entry = src ? (src.head || 0) - (src.elev || 0) : null;
+    var floors = w ? w.floors : 0;
+    var need = w ? (floors <= 6 ? (sh[Math.max(floors, 1)] || sh[6]) : 10 + 4 * (floors - 1)) : null;
+    var friction = (w && entry != null) ? entry - (w.pressure + w.elev) : null;
+    var gap = (need != null && entry != null && friction != null) ? (need + friction) - entry : null;
+    return { worst: w, entry: entry, need: need, gap: gap };
+  }
+
+  function drawMiniBuilding(ctx, cx, top, w, h, floors, served) {
+    var fh = h / floors;
+    var left = cx - w / 2;
+    for (var i = 1; i <= floors; i++) {
+      var y = top + h - i * fh;
+      var dry = i > served;
+      ctx.fillStyle = dry ? '#F1F5F9' : '#EAF4FF';
+      ctx.fillRect(left, y + 1, w, Math.max(1, fh - 2));
+      ctx.strokeStyle = dry ? '#CBD5E1' : '#BFD7F0';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(left + 0.5, y + 1.5, w - 1, Math.max(1, fh - 3));
+    }
+    var waterTop = top + h - served * fh;
+    ctx.save();
+    ctx.strokeStyle = '#94A3B8';
+    ctx.lineWidth = 8;
+    ctx.setLineDash([14, 10]);
+    ctx.beginPath();
+    ctx.moveTo(cx, top + 8);
+    ctx.lineTo(cx, Math.max(waterTop, top + 8));
+    ctx.stroke();
+    ctx.restore();
+    if (served > 0) {
+      ctx.fillStyle = '#2E8FD0';
+      ctx.fillRect(cx - 7, waterTop, 14, served * fh);
+    }
+    ctx.strokeStyle = '#0E9F6E';
+    ctx.lineWidth = 4;
+    ctx.beginPath();
+    ctx.moveTo(left - 12, waterTop);
+    ctx.lineTo(left + w + 12, waterTop);
+    ctx.stroke();
+  }
+
+  function paintShareCard(ctx, target, result) {
+    var W = 1200, H = 1500, P = 80;
+    var F = '"PingFang SC","Microsoft YaHei",system-ui,sans-serif';
+    var f = shareFacts(target, result);
+
+    ctx.fillStyle = '#FFFFFF';
+    ctx.fillRect(0, 0, W, H);
+    ctx.textBaseline = 'alphabetic';
+
+    /* 顶部：产品名 + 日期 */
+    ctx.fillStyle = '#0B63CE';
+    ctx.font = '600 26px ' + F;
+    ctx.textAlign = 'left';
+    ctx.fillText('水压体检 WaterCheck', P, 128);
+    var d = new Date();
+    var ds = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+    ctx.fillStyle = '#94A3B8';
+    ctx.font = '24px ' + F;
+    ctx.textAlign = 'right';
+    ctx.fillText(ds, W - P, 128);
+
+    /* 工程名 */
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#0F1720';
+    ctx.font = '700 64px ' + F;
+    var name = String(target.name || '未命名工程');
+    while (ctx.measureText(name).width > W - 2 * P && name.length > 4) name = name.slice(0, -2) + '…';
+    ctx.fillText(name, P, 250);
+
+    /* 结论大字 */
+    var w = f.worst;
+    var pass = w && w.served >= w.floors;
+    var big = !w ? '暂无结果' : (pass ? (w.floors + ' 层全部达标') : (w.floors + ' 层只能供到 ' + w.served + ' 层'));
+    ctx.fillStyle = pass ? '#0E9F6E' : '#DC2626';
+    ctx.font = '700 88px ' + F;
+    ctx.fillText(big, P, 384);
+
+    if (w) {
+      ctx.fillStyle = '#64748B';
+      ctx.font = '32px ' + F;
+      ctx.fillText('最不利点 ' + w.id + ' · 自由水压 ' + w.pressure.toFixed(1) + ' m', P, 452);
+      drawMiniBuilding(ctx, 600, 540, 260, 320, w.floors, w.served);
+    }
+
+    /* 三行关键数字（空值不画） */
+    var rows = [];
+    if (f.entry != null && isFinite(f.entry)) rows.push(['入口压力', f.entry.toFixed(1) + ' m']);
+    if (f.need != null && isFinite(f.need)) rows.push(['服务水头', f.need + ' m']);
+    if (f.gap != null && isFinite(f.gap)) rows.push(['缺口', f.gap.toFixed(1) + ' m']);
+    var y = 990;
+    rows.forEach(function (r) {
+      ctx.textAlign = 'left';
+      ctx.fillStyle = '#64748B';
+      ctx.font = '32px ' + F;
+      ctx.fillText(r[0], P, y);
+      ctx.textAlign = 'right';
+      ctx.fillStyle = '#0F1720';
+      ctx.font = '600 32px ' + F;
+      ctx.fillText(r[1], W - P, y);
+      ctx.strokeStyle = '#E2E8F0';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(P, y + 24);
+      ctx.lineTo(W - P, y + 24);
+      ctx.stroke();
+      y += 92;
+    });
+
+    /* 底部 */
+    var url = 'https://xiaoyuanzong12138-del.github.io/watercheck1/';
+    var tip = '扫码或打开链接，30 秒算出你家能供到几层';
+    ctx.textAlign = 'left';
+    ctx.fillStyle = '#0B63CE';
+    ctx.font = '28px ' + F;
+    var urlW = ctx.measureText(url).width;
+    ctx.fillText(url, P, 1372);
+    ctx.textAlign = 'right';
+    ctx.fillStyle = '#94A3B8';
+    ctx.font = '18px ' + F;
+    var tipW = ctx.measureText(tip).width;
+    if (urlW + tipW + 24 < W - 2 * P) {
+      ctx.fillText(tip, W - P, 1372);
+    } else {
+      ctx.fillText(tip, W - P, 1416);
+    }
+  }
+
+  /** 生成并下载分享图；失败给出提示，不白屏。 */
+  function exportShareCard(target, result, card) {
+    var msg = card.querySelector('.share-msg');
+    function fail(text) {
+      if (msg) { msg.textContent = text; msg.hidden = false; }
+      console.warn('分享图生成失败：' + text);
+    }
+    try {
+      var cv = document.createElement('canvas');
+      cv.width = 1200;
+      cv.height = 1500;
+      var ctx = cv.getContext('2d');
+      if (!ctx) { fail('当前浏览器不支持生成图片'); return; }
+      var run = function () {
+        try { paintShareCard(ctx, target, result); } catch (e) { fail('当前浏览器不支持生成图片'); return; }
+        try {
+          cv.toBlob(function (blob) {
+            if (!blob) { fail('当前浏览器不支持生成图片'); return; }
+            var safe = String(target.name || '体检').replace(/[\\/:*?"<>|]/g, '-');
+            var url = URL.createObjectURL(blob);
+            var a = document.createElement('a');
+            a.href = url;
+            a.download = '水压体检-' + safe + '.png';
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            setTimeout(function () { URL.revokeObjectURL(url); }, 1500);
+            if (msg) msg.hidden = true;
+          }, 'image/png');
+        } catch (e2) {
+          fail('当前浏览器不支持生成图片');
+        }
+      };
+      if (document.fonts && document.fonts.ready && document.fonts.ready.then) {
+        document.fonts.ready.then(run);
+      } else {
+        run();
+      }
+    } catch (e) {
+      fail('当前浏览器不支持生成图片');
+    }
+  }
 
   /** 楼层剖面图：等轴测结构 + 水爬升动画。所有数值来自求解结果。
    *  opts.scrub = true 时改为「滚动驱动」：不自动播放，由外部调用 fdApi.scrub(p) 控制水位。 */
