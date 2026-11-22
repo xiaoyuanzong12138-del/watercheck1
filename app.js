@@ -94,6 +94,8 @@
       renderResultPage(r.id);
     } else if (r.page === 'report') {
       renderReportPage(r.id);
+    } else if (r.page === 'tests') {
+      renderTestsPage();
     } else if (PAGE_META[r.page] && r.page !== 'project') {
       renderProjectPage(r.id, r.page);
     } else if (r.page === 'project') {
@@ -1038,7 +1040,8 @@
     f.className = 'footnotes app-footer no-print';
     f.innerHTML =
       '<p class="foot-line"><strong>水压体检 v0.9</strong> · 更新于 2026-11-22 · 数据仅存本机 · ' +
-      '<a href="https://xiaoyuanzong12138-del.github.io/watercheck1/" target="_blank" rel="noopener">在线体验</a></p>' +
+      '<a href="https://xiaoyuanzong12138-del.github.io/watercheck1/" target="_blank" rel="noopener">在线体验</a> · ' +
+      '<a href="#/tests">数值自检</a></p>' +
       '<p><strong>做了什么：</strong>录入小区的楼栋和管道，工具算出每栋楼的水压够不够、最多能供到第几层，并给出加压或换管的建议。</p>' +
       '<p><strong>用什么方法：</strong>先按用水人数估算各楼栋流量，再用环状管网平差（反复修正管段流量、直到各环路压力闭合的算法）算出各楼栋水压。</p>' +
       '<p><strong>数据安全：</strong>不联网、不登录，所有数据只存在你的浏览器里（本地存储，不上传到任何服务器）。</p>';
@@ -1533,7 +1536,10 @@
       /* ① 体检结论卡（管网图上方）：大字结论 + 诊断 + 改造方案 */
       var card = document.createElement('div');
       card.className = 'verdict-card verdict-' + verdict.tone;
-      var html = '<div class="verdict-head"><div class="verdict-big">' + esc(verdict.big) + '</div>' +
+      var html = '<div class="verdict-head">' +
+        '<span class="verdict-mark ' + (verdict.tone === 'ok' ? 'is-ok' : 'is-bad') + '" aria-hidden="true">' +
+        (verdict.tone === 'ok' ? '✓' : '✕') + '</span>' +
+        '<div class="verdict-big">' + esc(verdict.big) + '</div>' +
         '<button type="button" class="ev-btn" data-ev="verdict" aria-expanded="false">依据</button>' +
         '<button type="button" class="share-btn">生成分享图</button>' +
         infoDot('达标 = 能供到的层数 ≥ 实际层数。层数按服务水头表查：1 层 10 m、2 层 12 m、3 层 16 m、4 层 20 m、5 层 24 m、6 层 28 m。') +
@@ -1562,7 +1568,7 @@
             '<div class="plan-side">' +
             '<span class="plan-meta">试算后最低水压 ' + pl.outcome.minPressure.toFixed(1) + ' m · ' +
             pl.outcome.ok + '/' + pl.outcome.total + ' ' + pl.outcome.unit + '达标</span>' +
-            '<span class="pill ' + (pl.outcome.okBadge ? 'pill-ok' : 'pill-warn') + '">' + esc(pl.outcome.badgeText) + '</span>' +
+            '<span class="pill ' + (pl.outcome.okBadge ? 'pill-ok is-ok' : 'pill-warn is-bad') + '">' + esc(pl.outcome.badgeText) + '</span>' +
             '<button type="button" class="btn btn-ghost plan-try">试算</button>' +
             '</div></div>';
         }).join('') + '</div>';
@@ -1675,8 +1681,8 @@
           '<th>当前能供到' + infoDot('拿这栋楼的自由水压去查服务水头表，能到第几层就写第几层；比如 13.9 m 只够 2 层。') + '</th>' +
           '<th>自由水压' + infoDot('自由水压 = 水头 − 地面标高；6 层需要 28 m 才够。') + '</th><th>状态</th></tr></thead><tbody>';
         rows.forEach(function (row) {
-          var pill = row.status === 'ok' ? ['pill-ok', '达标'] :
-            (row.status === 'warn' ? ['pill-warn', '差1层'] : ['pill-bad', '差2层以上']);
+          var pill = row.status === 'ok' ? ['pill-ok is-ok', '达标'] :
+            (row.status === 'warn' ? ['pill-warn is-bad', '差1层'] : ['pill-bad is-bad', '差2层以上']);
           tableHtml += '<tr data-id="' + esc(row.id) + '"><td>' + esc(row.id) + '</td>' +
             '<td>' + row.floors + ' 层</td>' +
             '<td class="cell-served">' + servedText(row.served) + '</td>' +
@@ -1690,7 +1696,7 @@
         (r.nodes || []).forEach(function (rn) {
           if (rn.fixed) return;
           var served = WC.ui.networkMap.servedFloors(rn.pressure, target.settings);
-          var pill = served >= 6 ? 'pill-ok' : (served >= 1 ? 'pill-warn' : 'pill-bad');
+          var pill = served >= 6 ? 'pill-ok is-ok' : (served >= 1 ? 'pill-warn is-bad' : 'pill-bad is-bad');
           tableHtml += '<tr data-id="' + esc(rn.id) + '"><td>' + esc(rn.id) + '</td>' +
             '<td>' + (rn.elev || 0) + ' m</td>' +
             '<td>' + rn.pressure.toFixed(2) + ' m</td>' +
@@ -2203,6 +2209,12 @@
     });
 
     /* —— 7. 页脚说明 —— */
+    if (proMode.on) {
+      var tlink = document.createElement('p');
+      tlink.className = 'u-small result-tests-link';
+      tlink.innerHTML = '<a href="#/tests">数值自检 →</a> 想确认算法对不对？看三个算例的逐项比对。';
+      page.appendChild(tlink);
+    }
     var foot = document.createElement('p');
     foot.className = 'u-muted u-small pro-foot';
     foot.textContent = '计算方法：沿程水头损失按海澄-威廉公式 h = 10.67·L·Q^1.852 / (C^1.852·D^4.87)，流量分配用哈代-克罗斯环校正逐环修正直至闭合。本页数据来自恒定流平差计算。';
@@ -2384,6 +2396,248 @@
     doc.innerHTML = html;
     page.appendChild(doc.firstChild);
     root.appendChild(page);
+  }
+
+  /* ==================== 数值自检页（#/tests） ==================== */
+
+  /** 自检算例的输入：与 tests.html 完全一致（同一份数据、同一套期望值）。 */
+  function tNode(id, demand, elev, fixed, head, kind) {
+    return { id: id, kind: kind || 'junction', demand: demand, elev: elev, fixed: !!fixed, head: head || 0 };
+  }
+  function tPipe(id, from, to, L, D, C) {
+    return { id: id, from: from, to: to, L: L, D: D, C: C };
+  }
+  function tPipeOf(r, id) {
+    for (var i = 0; i < r.pipes.length; i++) if (r.pipes[i].id === id) return r.pipes[i];
+    return null;
+  }
+  function tNodeOf(r, id) {
+    for (var i = 0; i < r.nodes.length; i++) if (r.nodes[i].id === id) return r.nodes[i];
+    return null;
+  }
+
+  function tInt(label, expected, actual) {
+    var diff = actual - expected;
+    return {
+      label: label,
+      expected: expected + ' 次',
+      actual: actual + ' 次',
+      diff: (diff > 0 ? '+' : '') + diff,
+      pass: diff === 0
+    };
+  }
+  function tNum(label, expected, actual, tol, unit) {
+    var diff = actual - expected;
+    var u = unit ? ' ' + unit : '';
+    return {
+      label: label,
+      expected: expected.toFixed(2) + u,
+      actual: actual.toFixed(2) + u,
+      diff: (diff >= 0 ? '+' : '') + diff.toFixed(3) + u,
+      pass: Math.abs(diff) <= tol
+    };
+  }
+  function tBound(label, limit, actual, unit) {
+    var u = unit ? ' ' + unit : '';
+    return {
+      label: label,
+      expected: '绝对值 < ' + limit + u,
+      actual: actual.toExponential(2) + u,
+      diff: (actual - limit).toExponential(2) + u,
+      pass: Math.abs(actual) < limit
+    };
+  }
+
+  var TEST_CASES = [
+    {
+      name: '算例 A · 教科书画例',
+      scale: '5 节点 · 6 管段 · 2 环',
+      project: {
+        nodes: [
+          tNode('A', 0, 0, true, 100), tNode('1', 20, 5), tNode('2', 25, 6),
+          tNode('3', 30, 7), tNode('4', 15, 8)
+        ],
+        pipes: [
+          tPipe('P1', 'A', '1', 500, 400, 130),
+          tPipe('P2', '1', '2', 600, 300, 130),
+          tPipe('P3', '2', '3', 600, 250, 130),
+          tPipe('P4', '3', '4', 500, 200, 130),
+          tPipe('P5', '1', '4', 800, 250, 130),
+          tPipe('P6', '2', '4', 700, 200, 130)
+        ]
+      },
+      checks: function (r) {
+        return [
+          tInt('迭代次数', 13, r.iterations),
+          tNum('进水流量 P1', 90.00, tPipeOf(r, 'P1').qLs, 0.05, 'L/s'),
+          tNum('节点 1 自由水压', 94.35, tNodeOf(r, '1').pressure, 0.05, 'm'),
+          tBound('最大环闭合差', 1e-5, r.maxLoopResidual, 'm'),
+          tBound('最大连续性残差', 1e-6, r.maxContinuity, 'L/s')
+        ];
+      }
+    },
+    {
+      name: '算例 B · 城镇管网',
+      scale: '9 节点 · 10 管段 · 2 环',
+      project: {
+        nodes: [
+          tNode('S', 0, 8, true, 68),
+          tNode('1', 120, 12), tNode('2', 150, 14), tNode('3', 130, 16), tNode('4', 110, 18),
+          tNode('5', 100, 16), tNode('6', 80, 13), tNode('7', 50, 20), tNode('8', 50, 19)
+        ],
+        pipes: [
+          tPipe('G1', 'S', '1', 800, 1000, 130),
+          tPipe('R1', '1', '2', 600, 800, 130),
+          tPipe('R2', '2', '3', 500, 600, 130),
+          tPipe('R3', '3', '4', 600, 400, 130),
+          tPipe('R4', '4', '5', 500, 350, 130),
+          tPipe('R5', '5', '6', 600, 350, 130),
+          tPipe('R6', '6', '1', 700, 500, 130),
+          tPipe('C1', '2', '5', 500, 450, 130),
+          tPipe('B1', '3', '7', 400, 300, 130),
+          tPipe('B2', '4', '8', 400, 300, 130)
+        ]
+      },
+      checks: function (r) {
+        return [
+          tInt('迭代次数', 7, r.iterations),
+          tNum('进水流量 R1', 533.2, tPipeOf(r, 'R1').qLs, 0.05, 'L/s'),
+          tNum('节点 8 自由水压', 45.48, tNodeOf(r, '8').pressure, 0.05, 'm'),
+          tBound('最大环闭合差', 1e-5, r.maxLoopResidual, 'm'),
+          tBound('最大连续性残差', 1e-6, r.maxContinuity, 'L/s')
+        ];
+      }
+    },
+    {
+      name: '算例 C · 幸福里小区',
+      scale: '10 节点 · 10 管段 · 1 环',
+      project: {
+        nodes: [
+          tNode('S', 0, 0, true, 18),
+          tNode('J1', 0, 0), tNode('J2', 0, 0), tNode('J3', 0, 0),
+          tNode('L1', 0.667, 0, false, 0, 'building'), tNode('L2', 0.667, 0, false, 0, 'building'),
+          tNode('L3', 0.667, 0, false, 0, 'building'), tNode('L4', 0.667, 0, false, 0, 'building'),
+          tNode('L5', 0.667, 0, false, 0, 'building'), tNode('L6', 0.667, 0, false, 0, 'building')
+        ],
+        pipes: [
+          tPipe('M1', 'S', 'J1', 60, 80, 90),
+          tPipe('M2', 'J1', 'J2', 120, 80, 90),
+          tPipe('M3', 'J2', 'J3', 110, 80, 90),
+          tPipe('M4', 'J3', 'J1', 130, 80, 90),
+          tPipe('B1', 'J1', 'L1', 20, 40, 90),
+          tPipe('B2', 'J1', 'L2', 25, 40, 90),
+          tPipe('B3', 'J2', 'L3', 30, 40, 90),
+          tPipe('B4', 'J2', 'L4', 40, 32, 90),
+          tPipe('B5', 'J3', 'L5', 30, 40, 90),
+          tPipe('B6', 'J3', 'L6', 35, 32, 90)
+        ]
+      },
+      checks: function (r) {
+        var minP = null, minId = '';
+        r.nodes.forEach(function (n) {
+          if (n.demand > 0 && (minP === null || n.pressure < minP)) { minP = n.pressure; minId = n.id; }
+        });
+        return [
+          tInt('迭代次数', 3, r.iterations),
+          {
+            label: '最不利点自由水压',
+            expected: 'L4 · 13.88 m',
+            actual: minId + ' · ' + minP.toFixed(2) + ' m',
+            diff: (minP >= 13.88 ? '+' : '') + (minP - 13.88).toFixed(3) + ' m',
+            pass: minId === 'L4' && Math.abs(minP - 13.88) <= 0.05
+          },
+          tNum('总需水', 4.00, r.totalDemand, 0.05, 'L/s'),
+          tBound('最大环闭合差', 1e-5, r.maxLoopResidual, 'm'),
+          tBound('最大连续性残差', 1e-6, r.maxContinuity, 'L/s')
+        ];
+      }
+    }
+  ];
+
+  /** 数值自检页：每次打开都当场重算，不读缓存、不写存储。 */
+  function renderTestsPage() {
+    setTitle('数值自检');
+    var page = document.createElement('div');
+    page.className = 'page tests-page';
+    page.appendChild(buildTopbar({
+      name: '数值自检', onRename: null,
+      backHash: '#/home', backLabel: '← 首页'
+    }));
+
+    var head = document.createElement('header');
+    head.className = 'tests-head';
+    head.innerHTML =
+      '<h1>这台计算器算得对吗？</h1>' +
+      '<p class="tests-sub">下面三个算例的期望值来自独立实现，页面会当场调用当前求解内核重算并逐项比对。</p>';
+    page.appendChild(head);
+
+    var blocks = [];
+    var passN = 0, totalN = 0;
+    TEST_CASES.forEach(function (c) {
+      var rows;
+      try {
+        rows = c.checks(WC.solver.solve(c.project));
+      } catch (e) {
+        rows = [{
+          label: '算例求解失败', expected: '正常求解并收敛',
+          actual: (e && e.message) || '未知错误', diff: '—', pass: false
+        }];
+      }
+      rows.forEach(function (row) { totalN++; if (row.pass) passN++; });
+      blocks.push({ c: c, rows: rows });
+    });
+
+    var allOk = passN === totalN;
+    var sum = document.createElement('p');
+    sum.className = 'tests-summary ' + (allOk ? 'is-ok' : 'is-bad');
+    sum.setAttribute('role', 'status');
+    sum.innerHTML = '<span class="tests-summary-ico" aria-hidden="true">' + (allOk ? '✓' : '✕') + '</span>' +
+      (allOk ? passN + ' / ' + totalN + ' 项通过' : '有 ' + (totalN - passN) + ' 项未通过（共 ' + totalN + ' 项）');
+    page.appendChild(sum);
+
+    blocks.forEach(function (b) {
+      var sec = document.createElement('section');
+      sec.className = 'card tests-case';
+      var h = '<h2>' + esc(b.c.name) + '</h2>' +
+        '<p class="tests-scale">' + esc(b.c.scale) + '</p>' +
+        '<p class="tests-tol">容差：流量 ±0.05 L/s · 水压 ±0.05 m · 迭代 ±0</p>' +
+        '<div class="report-table-wrap tests-table-wrap">' +
+        '<table class="report-table tests-table">' +
+        '<thead><tr><th>检查项</th><th>期望值</th><th>实际值</th><th>差值</th><th>结果</th></tr></thead><tbody>';
+      b.rows.forEach(function (row) {
+        h += '<tr class="' + (row.pass ? 'is-pass' : 'is-fail') + '">' +
+          '<td>' + esc(row.label) + '</td>' +
+          '<td class="cell-num">' + esc(row.expected) + '</td>' +
+          '<td class="cell-num">' + esc(row.actual) + '</td>' +
+          '<td class="cell-num">' + esc(row.diff) + '</td>' +
+          '<td><span class="tests-verdict ' + (row.pass ? 'is-pass' : 'is-fail') + '">' +
+          (row.pass ? '✓ PASS' : '✕ FAIL') + '</span></td></tr>';
+      });
+      h += '</tbody></table></div>';
+      sec.innerHTML = h;
+      page.appendChild(sec);
+    });
+
+    var fx = document.createElement('details');
+    fx.className = 'card tests-formula';
+    fx.innerHTML =
+      '<summary>计算公式（点开看）</summary>' +
+      '<ul>' +
+      '<li>沿程水头损失：h = 10.67·L·Q<sup>1.852</sup> / (C<sup>1.852</sup>·D<sup>4.87</sup>)</li>' +
+      '<li>环校正：ΔQ = −Σh / (1.852·Σ|h/Q|)</li>' +
+      '<li>可服务层数：查表 1 层 10 m / 2 层 12 m / 之后每层 +4 m</li>' +
+      '</ul>';
+    page.appendChild(fx);
+
+    var note = document.createElement('p');
+    note.className = 'tests-note';
+    note.textContent = '本页每次打开都会重算；不联网、不缓存结果。';
+    page.appendChild(note);
+
+    root.appendChild(page);
+
+    // 供自动化脚本读取（仅本次渲染的现场结果，不做缓存）
+    window.__WC_SELFTEST__ = { passed: passN, total: totalN, blocks: blocks };
   }
 
   /* ==================== 体检页：楼层剖面图（静态 SVG，不带动画） ==================== */
