@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>开发过程记录 · 水压体检</title>
+<style>
+  :root { --bg:#F6F8FB; --ink:#0F1720; --muted:#5A6B7D; --line:#DCE3EC; --brand:#0B63CE; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink);
+         font:16px/1.75 system-ui,"PingFang SC","Microsoft YaHei",sans-serif; }
+  .wrap { max-width:860px; margin:0 auto; padding:48px 24px 80px; }
+  h1 { font-size:30px; margin:0 0 8px; }
+  .sub { color:var(--muted); margin:0 0 32px; }
+  h2 { font-size:19px; margin:40px 0 12px; padding-top:16px; border-top:1px solid var(--line); }
+  table { width:100%; border-collapse:collapse; font-size:14px; }
+  th,td { text-align:left; padding:8px 10px; border-bottom:1px solid var(--line); vertical-align:top; }
+  th { color:var(--muted); font-weight:600; }
+  a { color:var(--brand); text-decoration:none; }
+  a:hover { text-decoration:underline; }
+  code { background:#fff; border:1px solid var(--line); border-radius:4px; padding:1px 5px; font-size:13px; }
+  .note { background:#fff; border:1px solid var(--line); border-radius:10px; padding:16px 20px; margin:24px 0; }
+  ol li { margin:6px 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>开发过程记录</h1>
+  <p class="sub">水压体检 WaterCheck · 从零到上线的 13 轮 · <a href="../">返回产品</a></p>
+
+  <div class="note">
+    <strong>一句话方法：</strong>每轮提示词都给同样的六件东西 ——
+    「现在只做这一件事」、把算法写死、输出结构精确定义、边界条件、可对照的验收数值、
+    以及「对不上先排查，不许改期望值」。
+  </div>
+
+  <h2>13 轮索引</h2>
+  <table>
+    <thead><tr><th>轮次</th><th>目标</th><th>结果</th></tr></thead>
+    <tbody>
+      <tr><td>R1</td><td><a href="prompts/r1-骨架与工程管理.md">零构建骨架 + 工程管理</a></td><td>21 项 CDP 真实点击全通过</td></tr>
+      <tr><td>R2</td><td><a href="prompts/r2-数据编辑.md">数据编辑与 7 条校验</a></td><td>用水量 17 / 节点 17 / 管段 16 / 校验 29 全通过</td></tr>
+      <tr><td>R3a</td><td><a href="prompts/r3a-求解内核与数值自检.md">环状管网平差求解内核</a></td><td><b>三算例 15 项数值对拍一次全 PASS</b>（13 次迭代 / 90.00 L/s / 94.349 m；7 次 / 533.224 L/s / 45.478 m）</td></tr>
+      <tr><td>R3b</td><td><a href="prompts/r3b-管网图与示例工程.md">管网图 + 4 个示例工程</a></td><td>17/17；四示例迭代 3 / 0 / 7 / 0</td></tr>
+      <tr><td>R4</td><td><a href="prompts/r4-体检报告.md">体检报告（结论/诊断/方案试算）</a></td><td>23/23；红→绿试算不写库</td></tr>
+      <tr><td>R5</td><td><a href="prompts/r5-专业模式与计算书.md">专业模式 + 计算书</a></td><td>22/22；A4 三页、CSV 带 BOM</td></tr>
+      <tr><td>R6</td><td><a href="prompts/r6-移动端与打磨.md">移动端与打磨</a></td><td>17/17</td></tr>
+      <tr><td>R6b</td><td><a href="prompts/r6b-首屏样例卡.md">首页样例体检卡</a></td><td>17/17</td></tr>
+      <tr><td>R6c</td><td><a href="prompts/r6c-高层口径与防白屏.md">高层「用水点」口径 + 防白屏</a><br><a href="prompts/r6c-诊断口径修正.md">诊断口径修正</a></td><td>11/11；逐字比对全中</td></tr>
+      <tr><td>R7a</td><td><a href="prompts/r7a-3d剖面楼.md">3D 剖面楼（静态）</a></td><td>11/11</td></tr>
+      <tr><td>R7b</td><td><a href="prompts/r7b-水柱动画与三方案联动.md">水柱爬升动画 + 三方案联动</a></td><td>16/16（切后台不重播）</td></tr>
+      <tr><td>R9a</td><td><a href="prompts/r9a-问句开场与故事卡.md">首页问句开场 + 故事卡</a></td><td>15/15</td></tr>
+      <tr><td>R9b1</td><td><a href="prompts/r9b1-滚动驱动舞台.md">滚动驱动舞台</a></td><td>14/14；headless 实测 180 fps、往回滑水会退</td></tr>
+      <tr><td>R9b2</td><td><a href="prompts/r9b2-首页三方案卡.md">首页三方案卡</a></td><td>16/16；换管只涨 0.3 m 如实呈现</td></tr>
+      <tr><td>R8</td><td><a href="prompts/r8-30秒自查.md">30 秒自查</a></td><td>15/15</td></tr>
+      <tr><td>R11</td><td><a href="prompts/r11-结论挂依据.md">结论挂「依据」</a></td><td>14/14</td></tr>
+      <tr><td>R12</td><td><a href="prompts/r12-分享卡与og.md">分享图 + 微信 OG</a></td><td>分享卡 12/12</td></tr>
+      <tr><td>R13</td><td><a href="prompts/r13-自检页与移动端收尾.md">数值自检页 + 移动端收尾</a></td><td>22/22；全量回归 22 套全绿</td></tr>
+    </tbody>
+  </table>
+
+  <h2>三次「人机互相纠错」（最能说明协作质量）</h2>
+  <ol>
+    <li>我写「高层示例应为迭代 1 次」→ TRAE 判断该网 17 节点 16 管段、环数 = 0，是枝状网，语义上就是 <b>0 次</b>；我那个 1 是旧实现的产物。</li>
+    <li>我用连续公式算可服务层数 → TRAE 坚持<b>查服务水头表</b>（1 层 10、2 层 12、之后每层 +4），13.88 m 对应 <b>2 层</b>而不是 1 层。</li>
+    <li>我把水压缺口写成 8.1 m → TRAE 指出应为（服务水头 + 全损）− 入口压力 = 28 + 4.1 − 18 = <b>14.1 m</b>，我连加减方向都错了。</li>
+  </ol>
+  <p class="sub">另：R6c 那轮它发现我给的公式 <code>10+4×(floors−1)</code> 在 6 层会得 30 m，与同一段的「6 层 28 m」自相矛盾，于是选「≤6 层查表、>6 层外推」，保住了幸福里的 14.1 m。</p>
+
+  <h2>验证方式</h2>
+  <p>每轮都用 <b>CDP 直驱 headless Edge 做真实点击测试</b>（不是只看代码），累计 22 套回归脚本；另在线上提供
+     <a href="../#/tests">数值自检页</a>，打开即当场重算三个基准算例并逐项对拍。</p>
+</div>
+</body>
+</html>
