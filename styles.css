@@ -983,6 +983,34 @@ button { font-family: inherit; font-size: inherit; }
 
 /* ==================== 移动端打磨 / 稳定性 / 可访问性 ==================== */
 
+/* 首页样例体检卡 */
+.showcase-card {
+  margin: 0 0 var(--sp-4);
+  padding: var(--sp-4);
+  border-left: 5px solid var(--brand);
+}
+.showcase-head { display: flex; align-items: center; gap: var(--sp-2); flex-wrap: wrap; margin-bottom: var(--sp-2); }
+.showcase-head h3 { margin: 0; font-size: var(--fs-16); }
+.showcase-bad, .showcase-good {
+  display: flex; align-items: flex-start; gap: 8px;
+  margin: 6px 0; font-size: 18px; font-weight: 700; line-height: 1.5;
+}
+.showcase-bad { color: var(--danger); }
+.showcase-good { color: var(--ok); }
+.showcase-mark { flex: none; font-weight: 700; }
+.showcase-btn { margin-top: var(--sp-2); }
+.showcase-foot { margin-top: 6px; text-align: right; }
+
+/* 示例卡上的一行结论（实时算） */
+.sample-verdict {
+  margin: 8px 0 0;
+  font-size: var(--fs-13);
+  font-weight: 600;
+  color: var(--ink);
+  border-top: 1px dashed var(--line);
+  padding-top: 8px;
+}
+
 /* 首页首次访问引导条 */
 .guide-bar {
   display: flex; align-items: center; gap: var(--sp-2);
@@ -1090,6 +1118,8 @@ a:focus-visible { border-radius: var(--radius-xs); }
   .sample-grid { grid-template-columns: 1fr; }
   .calc-metrics { grid-template-columns: repeat(auto-fit, minmax(130px, 1fr)); gap: var(--sp-2); }
   .guide-bar { padding: 8px 10px; }
+  .showcase-card { padding: var(--sp-3); margin-bottom: var(--sp-3); }
+  .showcase-btn { width: 100%; }
   .verdict-diags li { flex-direction: column; gap: 2px; }
   .report-doc { padding: var(--sp-3); }
   .report-table { min-width: 340px; }

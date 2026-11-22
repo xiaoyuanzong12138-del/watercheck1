@@ -198,11 +198,113 @@
     var page = document.createElement('div');
     page.className = 'home';
     page.appendChild(buildHero());
+    page.appendChild(buildShowcase());
     var guide = buildGuide();
     if (guide) page.appendChild(guide);
     page.appendChild(buildSamples());
     page.appendChild(buildMyProjects());
     root.appendChild(page);
+  }
+
+  /* —— 首页示例结论：真调 WC.solver 算，算不出来就降级，绝不编数字 —— */
+  var sampleCalcCache = {};
+  var pendingAutoCheck = null; // 点「看这份完整报告」后，进工程页自动体检一次
+
+  function sampleTarget(s) {
+    return { id: s.id, name: s.title, water: s.water, nodes: s.nodes, pipes: s.pipes, settings: s.settings };
+  }
+  function sampleResult(s) {
+    if (sampleCalcCache[s.id]) return sampleCalcCache[s.id];
+    var out;
+    try {
+      var t = sampleTarget(s);
+      out = { ok: true, target: t, result: WC.solver.solve(t) };
+    } catch (e) {
+      console.warn('首页示例计算失败（' + s.title + '）：' + (e && e.message ? e.message : e));
+      out = { ok: false };
+    }
+    sampleCalcCache[s.id] = out;
+    return out;
+  }
+
+  /** 示例卡那一行结论（如「水压只够到 2 层」）。 */
+  function sampleSummary(s) {
+    var c = sampleResult(s);
+    if (!c.ok) return '点开查看';
+    var rows = verdictScope(c.target, c.result).rows;
+    if (allPass(c.target, c.result)) {
+      if (rows.length) {
+        var maxF = Math.max.apply(null, rows.map(function (x) { return x.floors; }));
+        return maxF + ' 层全达标';
+      }
+      return Math.round(c.result.totalDemand) + ' L/s 全达标';
+    }
+    var w = worstPoint(c.target, c.result);
+    if (!w) return '点开查看';
+    return w.served === 0 ? (w.floors + ' 层只能供到 0 层') : ('水压只够到 ' + w.served + ' 层');
+  }
+
+  /** 从当前入口压力往上找最小达标压力（0.5 m 步长，上限 80 m）。 */
+  function pressurizeSearch(target) {
+    var src = mainSource(target);
+    if (!src) return null;
+    var start = Math.round((src.head || 0) * 2) / 2;
+    for (var h = start; h <= 80 + 1e-9; h += 0.5) {
+      var H = h;
+      try {
+        var p = cloneProject(target);
+        p.nodes.forEach(function (n) { if (n.fixed) n.head = H; });
+        var rr = WC.solver.solve(p);
+        if (allPass(target, rr)) {
+          var w = worstPoint(target, rr);
+          return { H: H, pressure: w.pressure };
+        }
+      } catch (e) { return null; }
+    }
+    return null;
+  }
+
+  /** 首页「样例体检卡」：用幸福里示例实时算出红/绿两行。 */
+  function buildShowcase() {
+    var s = samples.byId('sample-liuceng-muzhi');
+    var card = document.createElement('section');
+    card.className = 'card showcase-card';
+    if (!s) return card;
+
+    var head = '<div class="showcase-head"><h3>幸福里小区 · 6 层住宅 · 1998 年建</h3>' +
+      '<span class="tag tag-water">样例</span></div>';
+    var c = sampleResult(s);
+    var body = '';
+    if (c.ok) {
+      var rows = verdictScope(c.target, c.result).rows;
+      var w = worstPoint(c.target, c.result);
+      var served = w ? w.served : 0;
+      body += '<p class="showcase-bad"><span class="showcase-mark" aria-hidden="true">✕</span>现在只供到 ' + served + ' 层 —— 第 ' + (served + 1) + ' 层以上，高峰期没水</p>';
+      var plan = pressurizeSearch(c.target);
+      if (w && plan) {
+        var maxF = rows.length ? Math.max.apply(null, rows.map(function (x) { return x.floors; })) : 6;
+        body += '<p class="showcase-good"><span class="showcase-mark" aria-hidden="true">✓</span>加装增压泵、加压到 ' + plan.H.toFixed(1) + ' m 后，' +
+          maxF + ' 层全部达标（最不利处 ' + plan.pressure.toFixed(1) + ' m）</p>';
+      } else if (w) {
+        body += '<p class="showcase-good"><span class="showcase-mark" aria-hidden="true">✓</span>点开看看这份报告</p>';
+      }
+    } else {
+      body += '<p class="showcase-bad"><span class="showcase-mark" aria-hidden="true">✕</span>点开看看这份报告</p>';
+    }
+
+    card.innerHTML = head + body +
+      '<div class="showcase-foot"><span class="u-muted u-small">数据来自内置示例，实时计算</span></div>';
+
+    var btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'btn btn-primary showcase-btn';
+    btn.textContent = '看这份完整报告 →';
+    btn.addEventListener('click', function () {
+      pendingAutoCheck = s.id;
+      navigate('#/project/' + encodeURIComponent(s.id));
+    });
+    card.insertBefore(btn, card.querySelector('.showcase-foot'));
+    return card;
   }
 
   /* —— 首次访问引导条（关掉后记住，不再出现） —— */
@@ -277,7 +379,8 @@
       card.innerHTML =
         '<span class="tag tag-water">示例</span>' +
         '<h3>' + esc(s.title) + '</h3>' +
-        '<p>' + esc(s.intro) + '</p>';
+        '<p>' + esc(s.intro) + '</p>' +
+        '<p class="sample-verdict">' + esc(sampleSummary(s)) + '</p>';
       var go = function () { navigate('#/project/' + encodeURIComponent(s.id)); };
       card.addEventListener('click', go);
       card.addEventListener('keydown', function (ev) {
@@ -1010,6 +1113,16 @@
 
     var cached = resultCache[target.id];
     if (cached) showOriginal(cached.result);
+
+    // 从首页样例卡进来：自动体检一次，并滚到结论卡
+    if (pendingAutoCheck === target.id) {
+      pendingAutoCheck = null;
+      setTimeout(function () {
+        if (!original) runCalc();
+        var vc = document.querySelector('.verdict-card');
+        if (vc) vc.scrollIntoView({ block: 'center' });
+      }, 60);
+    }
 
     return panel;
   }
