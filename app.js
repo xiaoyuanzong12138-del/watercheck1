@@ -84,8 +84,39 @@
     }
   };
 
+  /* ==================== 滚动位置记忆（本次会话内，按路由） ==================== */
+  /*
+   * key = hash 第一段（去掉 :id）：home / project / result / report / tests。
+   * 同一路由的不同工程共用一个位置（只存内存，刷新即清空；不做 localStorage）。
+   * 浏览器前进/后退同样会触发 hashchange → render()，走同一套 remember/restore。
+   * 因此 boot 里把 history.scrollRestoration 设为 manual（理由见 boot 注释）：
+   * 否则浏览器会先自行恢复旧位置，导致「离开时」记录被污染。
+   */
+  var scrollMem = {};
+  var currentRouteKey = null;
+
+  function maxScrollY() {
+    return Math.max(0, (document.documentElement.scrollHeight || 0) - window.innerHeight);
+  }
+
+  /** 离开当前路由前记住位置。 */
+  function rememberScroll() {
+    if (!currentRouteKey) return;
+    scrollMem[currentRouteKey] = window.scrollY || window.pageYOffset || 0;
+  }
+
+  /** 渲染完成后还原位置；没有记录则停在顶部。超出当前页高时夹到合法范围。 */
+  function restoreScroll(key) {
+    var y = scrollMem[key];
+    var target = (typeof y === 'number') ? Math.max(0, Math.min(y, maxScrollY())) : 0;
+    window.scrollTo(0, target);
+    // 滚动舞台（水柱/旁白/解释框）依赖 scroll 事件重算，还原后必须补一次
+    try { window.dispatchEvent(new Event('scroll')); } catch (e) { /* 老浏览器忽略 */ }
+  }
+
   function render() {
     var r = parseHash();
+    rememberScroll();
     root.innerHTML = '';
 
     if (r.page === 'edit') {
@@ -108,6 +139,9 @@
     } else {
       root.appendChild(buildFootnotes());
     }
+
+    currentRouteKey = r.page || 'home';
+    restoreScroll(currentRouteKey);
   }
 
   /* ==================== 顶栏 ==================== */
@@ -4777,6 +4811,10 @@
     root = document.getElementById('app');
     if (!root) return;
     root.className = 'app-shell';
+    // 本应用是单页 hash 路由，滚动位置由 scrollMem 自行管理。
+    // 关掉浏览器的自动恢复：否则后退/前进时浏览器会先恢复旧位置、再触发 hashchange，
+    // 把「离开时」的位置记成恢复后的值，两次记录互相污染。只影响本页面，不碰历史结构。
+    if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
     window.addEventListener('hashchange', render);
 
     // 白话解释小圆点：点一下展开，点别处收起（事件委托，重渲染后依然有效）
