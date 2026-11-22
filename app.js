@@ -953,6 +953,38 @@
       if (floorFig) verdictRow.appendChild(floorFig);
       resultBox.appendChild(verdictRow);
 
+      if (floorFig && floorFig.fdApi) {
+        var F = floorFig.fdApi.floors;
+        var pumpPlan = null, pipePlan = null;
+        plans.forEach(function (p) {
+          if (!pumpPlan && p.name.indexOf('加压') >= 0) pumpPlan = p;
+          if (!pipePlan && p.name.indexOf('扩径') >= 0) pipePlan = p;
+        });
+        var acts = document.createElement('div');
+        acts.className = 'fd-actions';
+        var actBtns = [];
+        var runPlan = function (kind, plan) {
+          actBtns.forEach(function (b) { b.disabled = true; });
+          floorFig.fdApi.plan(kind, plan, function () {
+            actBtns.forEach(function (b) { b.disabled = false; });
+          });
+        };
+        var mkBtn = function (label, kind, plan) {
+          var b = document.createElement('button');
+          b.type = 'button';
+          b.className = 'fd-act';
+          b.textContent = label;
+          b.addEventListener('click', function () { runPlan(kind, plan); });
+          acts.appendChild(b);
+          actBtns.push(b);
+        };
+        if (pumpPlan) mkBtn('加一台增压泵', 'pump', pumpPlan);
+        if (pipePlan) mkBtn('把主管换成更大的管', 'pipe', pipePlan);
+        if (pumpPlan && F >= 4) mkBtn((F - 1) + '–' + F + ' 层单独二次加压', 'local', pumpPlan);
+        if (actBtns.length) card.appendChild(acts);
+        setTimeout(function () { floorFig.fdApi.play(); }, 30);
+      }
+
       Array.prototype.forEach.call(card.querySelectorAll('.plan-try'), function (b) {
         b.addEventListener('click', function () {
           var rowEl = b.closest('.plan-row');
@@ -1698,7 +1730,7 @@
 
   /* ==================== 体检页：楼层剖面图（静态 SVG，不带动画） ==================== */
 
-  /** 按最不利楼栋实时算「供到几层」，画一张等轴测楼层剖面。没有楼栋节点则返回 null。 */
+  /** 楼层剖面图：等轴测结构 + 水爬升动画。所有数值来自求解结果。 */
   function buildFloorDiagram(target, result) {
     var scope;
     try {
@@ -1712,33 +1744,41 @@
     var worst = scope.rows.reduce(function (a, b) { return b.pressure < a.pressure ? b : a; });
     var floors = worst.floors || 0;
     if (!floors) return null;
-    var served = Math.max(0, Math.min(WC.ui.networkMap.servedFloors(worst.pressure, target.settings), floors));
+    var served0 = Math.max(0, Math.min(WC.ui.networkMap.servedFloors(worst.pressure, target.settings), floors));
 
     var topY = 70, bottomY = 340, bandH = (bottomY - topY) / floors;
-    var waterY = bottomY - served * bandH;
+    var waterY0 = bottomY - served0 * bandH;
+    var PX = 134, PW = 12;
+    var uid = 'fdclip' + Math.floor(Math.random() * 100000);
     var s = '';
 
-    /* 地面投影 */
-    s += '<ellipse cx="158" cy="344" rx="112" ry="11" fill="#E9EEF5"/>';
-    /* 立体楼三个面：侧面暗、顶面亮、正面中（色阶差约 8%） */
-    s += '<polygon points="220,70 254,48 254,318 220,340" fill="#D3DEEC"/>';
-    s += '<polygon points="60,70 94,48 254,48 220,70" fill="#EEF4FB"/>';
-    s += '<polygon points="60,70 220,70 220,340 60,340" fill="#E2EAF4"/>';
+    /* 地面投影（向右下延伸，楼落地） */
+    s += '<ellipse cx="178" cy="351" rx="122" ry="12" fill="#E5EBF3"/>';
+    /* 楼体：侧面暗 */
+    s += '<polygon points="220,70 254,48 254,318 220,340" fill="#CBD9E8"/>';
+    /* 屋顶板（8px 厚，比正面更亮）+ 板下阴影线 */
+    s += '<polygon points="60,62 94,40 254,40 220,62" fill="#F6FAFF"/>';
+    s += '<polygon points="60,62 220,62 220,70 60,70" fill="#EAF1FA"/>';
+    s += '<polygon points="220,62 254,40 254,48 220,70" fill="#DCE7F3"/>';
+    s += '<line x1="60" y1="70" x2="220" y2="70" stroke="#B9C9DB" stroke-width="2"/>';
+    /* 正面（剖切面，更亮） */
+    s += '<polygon points="60,70 220,70 220,340 60,340" fill="#EDF3FA"/>';
+    /* 剖切口的左右侧墙线 */
+    s += '<line x1="60" y1="70" x2="60" y2="340" stroke="#9FB4CB" stroke-width="2"/>';
+    s += '<line x1="220" y1="70" x2="220" y2="340" stroke="#9FB4CB" stroke-width="2"/>';
 
-    /* 楼层格子：没水的楼层半透明灰 + 虚线轮廓 */
     for (var k = 1; k <= floors; k++) {
       var y1 = bottomY - k * bandH;
-      if (k > served) {
-        s += '<rect x="60" y="' + y1.toFixed(1) + '" width="160" height="' + bandH.toFixed(1) +
-          '" fill="#94A3B8" fill-opacity="0.45" stroke="#94A3B8" stroke-dasharray="4 3" stroke-width="1"/>';
-      }
+      s += '<rect class="fd-ok" data-k="' + k + '" x="62" y="' + (y1 + 0.5).toFixed(1) + '" width="156" height="' +
+        Math.max(1, bandH - 1).toFixed(1) + '" fill="#0E9F6E" fill-opacity="0.13" opacity="0"/>';
+      s += '<rect class="fd-dry" data-k="' + k + '" x="60" y="' + y1.toFixed(1) + '" width="160" height="' +
+        bandH.toFixed(1) + '" fill="#94A3B8" fill-opacity="0.45" stroke="#94A3B8" stroke-dasharray="4 3" stroke-width="1" opacity="0"/>';
       if (k < floors) {
-        s += '<line x1="60" y1="' + y1.toFixed(1) + '" x2="220" y2="' + y1.toFixed(1) +
+        s += '<line class="fd-fl" data-k="' + k + '" x1="60" y1="' + y1.toFixed(1) + '" x2="220" y2="' + y1.toFixed(1) +
           '" stroke="#F5F9FD" stroke-width="1"/>';
       }
     }
 
-    /* 左侧楼层号（楼层多时隔 3 层标一次，避免挤成一团） */
     var fs = floors <= 8 ? 10 : 9;
     for (var k2 = 1; k2 <= floors; k2++) {
       var show = floors <= 8 || k2 === 1 || k2 === floors || k2 % 3 === 0;
@@ -1748,42 +1788,284 @@
         '" fill="#94A3B8">' + k2 + 'F</text>';
     }
 
-    /* 立管：有水的段实心蓝，没水的段虚线空心 */
-    if (served > 0) {
-      s += '<rect x="135" y="' + waterY.toFixed(1) + '" width="10" height="' + (bottomY - waterY).toFixed(1) +
-        '" rx="5" fill="#38A3E0"/>';
-    }
-    if (served < floors) {
-      s += '<rect x="135" y="' + topY + '" width="10" height="' + (waterY - topY).toFixed(1) +
-        '" rx="5" fill="none" stroke="#94A3B8" stroke-dasharray="4 3" stroke-width="1.6"/>';
-    }
-    /* 进水管：从地面下方折向右侧 */
-    s += '<path d="M 300 366 H 140 V ' + bottomY + '" fill="none" stroke="#38A3E0" stroke-width="10" ' +
-      'stroke-linecap="round" stroke-linejoin="round"/>';
+    /* 立管（空管虚线）+ 进水管（先隐藏，动画淡入） */
+    s += '<rect x="134" y="70" width="12" height="270" rx="6" fill="none" stroke="#94A3B8" stroke-dasharray="4 3" stroke-width="1.6"/>';
+    s += '<path class="fd-inlet" d="M 300 366 H 140 V ' + bottomY + '" fill="none" stroke="#2E8FD0" stroke-width="12" ' +
+      'stroke-linecap="round" stroke-linejoin="round" opacity="0"/>';
 
-    /* 水位分界线（高光绿线） */
-    s += '<line x1="128" y1="' + waterY.toFixed(1) + '" x2="152" y2="' + waterY.toFixed(1) +
-      '" stroke="#0E9F6E" stroke-width="2" stroke-linecap="round"/>';
-
-    /* 标签：供到第几层 + 该点自由水压 */
-    var label = served + ' 层 · ' + worst.pressure.toFixed(1) + ' m';
-    var lw = Math.round(14 + label.length * 6.2);
-    var ly = Math.max(topY + 2, waterY - 22);
-    s += '<rect x="152" y="' + ly.toFixed(1) + '" width="' + lw + '" height="16" rx="3" ' +
-      'fill="#E7F6EF" stroke="#BCE5D2"/>';
-    s += '<text x="159" y="' + (ly + 11.5).toFixed(1) + '" font-size="10" font-weight="700" fill="#0E9F6E">' +
-      esc(label) + '</text>';
-
-    /* 右上角提示：哪几层没水 */
-    if (served < floors) {
-      s += '<text x="316" y="38" text-anchor="end" font-size="10" font-weight="600" fill="#DC2626">' +
-        (served + 1) + ' 层以上：高峰期没水</text>';
+    /* 水柱（裁剪在管内）+ 高光 + 气泡 + 波浪 */
+    s += '<defs><clipPath id="' + uid + '"><rect x="134" y="70" width="12" height="270" rx="6"/></clipPath></defs>';
+    s += '<g clip-path="url(#' + uid + ')">';
+    s += '<rect class="fd-water" x="134" y="340" width="12" height="0" fill="#2E8FD0"/>';
+    s += '<line class="fd-shine" x1="137.5" y1="340" x2="137.5" y2="340" stroke="#67B8E8" stroke-width="2"/>';
+    for (var b = 0; b < 5; b++) {
+      s += '<circle class="fd-bubble" r="1.5" cx="' + (136.5 + b * 1.9).toFixed(1) + '" cy="340" fill="#fff" opacity="0"/>';
     }
+    s += '</g>';
+    s += '<path class="fd-wave" d="" fill="none" stroke="#9AD2F2" stroke-width="1.6" opacity="0"/>';
+
+    /* 水位线 + 标签 + 右上提示（后段淡入） */
+    s += '<line class="fd-line" x1="126" y1="340" x2="154" y2="340" stroke="#0E9F6E" stroke-width="2" stroke-linecap="round" opacity="0"/>';
+    s += '<g class="fd-chip" opacity="0"><rect class="fd-chip-bg" x="152" y="318" width="90" height="16" rx="3" fill="#E7F6EF" stroke="#BCE5D2"/>' +
+      '<text class="fd-chip-text" x="159" y="329.5" font-size="10" font-weight="700" fill="#0E9F6E"></text></g>';
+    s += '<text class="fd-note" x="316" y="38" text-anchor="end" font-size="10" font-weight="600" fill="#DC2626" opacity="0"></text>';
 
     var wrap = document.createElement('div');
     wrap.className = 'floor-card';
-    wrap.innerHTML = '<svg class="floor-svg" viewBox="0 0 320 400" role="img" aria-label="楼层水压剖面图：' +
-      esc(worst.id) + ' 共 ' + floors + ' 层，能供到 ' + served + ' 层">' + s + '</svg>';
+    wrap.innerHTML =
+      '<svg class="floor-svg" viewBox="0 0 320 400" role="img" aria-label="楼层水压剖面图：' + esc(worst.id) +
+      ' 共 ' + floors + ' 层，能供到 ' + served0 + ' 层">' + s + '</svg>' +
+      '<div class="fd-bar"><button type="button" class="fd-btn fd-replay">重播</button>' +
+      '<button type="button" class="fd-btn fd-restore" hidden>恢复原状</button></div>' +
+      '<p class="fd-caption"></p>';
+
+    var svg = wrap.querySelector('svg');
+    function q(sel) { return svg.querySelector(sel); }
+    function qa(sel) { return Array.prototype.slice.call(svg.querySelectorAll(sel)); }
+    var elWater = q('.fd-water'), elShine = q('.fd-shine'), elWave = q('.fd-wave'), elLine = q('.fd-line');
+    var elChip = q('.fd-chip'), elChipBg = q('.fd-chip-bg'), elChipText = q('.fd-chip-text');
+    var elNote = q('.fd-note'), elInlet = q('.fd-inlet');
+    var dryEls = qa('.fd-dry'), okEls = qa('.fd-ok'), flEls = qa('.fd-fl'), bubbles = qa('.fd-bubble');
+    var elCaption = wrap.querySelector('.fd-caption');
+    var btnRestore = wrap.querySelector('.fd-restore');
+
+    var reduced = !!(window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches);
+    var raf = null, curRunning = false, curStart = 0, curElapsed = null, curPlayer = null, pendingStart = false;
+    var flash = {}, lastY = bottomY, reveal = 0;
+
+    function now() { return (window.performance && performance.now) ? performance.now() : Date.now(); }
+    function stopAnim() { curRunning = false; if (raf) cancelAnimationFrame(raf); raf = null; }
+
+    function setWater(y, t) {
+      var h = Math.max(0, bottomY - y);
+      elWater.setAttribute('y', y.toFixed(1));
+      elWater.setAttribute('height', h.toFixed(1));
+      elShine.setAttribute('y1', y.toFixed(1));
+      elShine.style.display = h > 2 ? '' : 'none';
+      elLine.setAttribute('y1', y.toFixed(1));
+      elLine.setAttribute('y2', y.toFixed(1));
+      if (h > 4) {
+        var d = 'M ' + PX + ' ' + (y + 1).toFixed(1);
+        for (var i = 0; i <= 12; i++) {
+          var xx = PX + (i / 12) * PW;
+          var yy = y + 1 + 2.6 * Math.sin(t * 5.2 + (i / 12) * Math.PI * 6);
+          d += ' L ' + xx.toFixed(1) + ' ' + yy.toFixed(1);
+        }
+        elWave.setAttribute('d', d);
+        elWave.style.opacity = 1;
+      } else {
+        elWave.style.opacity = 0;
+      }
+      var flowK = Math.max(0.5, Math.min(1.8, (result.totalDemand || 4) / 4));
+      bubbles.forEach(function (bb, bi) {
+        if (h < 10) { bb.setAttribute('opacity', 0); return; }
+        var frac = (t * (0.35 + 0.25 * flowK) + bi * 0.21) % 1;
+        bb.setAttribute('cy', (bottomY - frac * h).toFixed(1));
+        bb.setAttribute('opacity', 0.55);
+      });
+    }
+
+    function setFloors(servedNow, revealP, greenSet) {
+      dryEls.forEach(function (r) {
+        var kk = +r.getAttribute('data-k');
+        r.setAttribute('opacity', kk > servedNow ? (0.45 * revealP).toFixed(2) : 0);
+      });
+      okEls.forEach(function (r) {
+        var kk = +r.getAttribute('data-k');
+        var on = greenSet ? greenSet.indexOf(kk) >= 0 : kk <= servedNow;
+        r.setAttribute('opacity', on ? 1 : 0);
+      });
+    }
+
+    function setChip(text, op) {
+      elChipText.textContent = text;
+      elChipBg.setAttribute('width', Math.round(14 + text.length * 6.2));
+      elChip.setAttribute('opacity', op);
+    }
+    function placeChip(y) {
+      var ly = Math.max(topY + 2, y - 22);
+      elChipBg.setAttribute('y', ly.toFixed(1));
+      elChipText.setAttribute('y', (ly + 11.5).toFixed(1));
+    }
+    function setNote(text, op) { elNote.textContent = text; elNote.setAttribute('opacity', op); }
+    function setCaption(text) { elCaption.textContent = text; }
+    function resetFlash() {
+      flEls.forEach(function (ln) { ln.setAttribute('stroke', '#F5F9FD'); ln.setAttribute('stroke-width', 1); });
+    }
+
+    /* —— 初始动画：0.3s 进水管 → 1.5s 匀速上升 → 冲高回落 → 干楼层淡入 —— */
+    function playInitial(elapsed) {
+      resetFlash();
+      flash = {}; lastY = bottomY; reveal = 0;
+      elInlet.setAttribute('opacity', 0);
+      elLine.setAttribute('opacity', 0);
+      elChip.setAttribute('opacity', 0);
+      setWater(bottomY, 0);
+      setFloors(0, 0, null);
+      setChip(served0 + ' 层 · ' + worst.pressure.toFixed(1) + ' m', 0);
+      placeChip(waterY0);
+      if (served0 < floors) setNote((served0 + 1) + ' 层以上：高峰期没水', 0); else setNote('', 0);
+      setCaption(served0 === 0
+        ? '现状：水刚进管口就停住（0/' + floors + ' 层）'
+        : '现状：水只供到 ' + served0 + ' 层（共 ' + floors + ' 层）');
+      btnRestore.hidden = true;
+      curStart = now() - (elapsed || 0) * 1000;
+
+      function loop() {
+        if (!curRunning) return;
+        if (document.hidden) { raf = null; return; }
+        var t = (now() - curStart) / 1000;
+        if (t >= 2.6) { finishInitial(); return; }
+        elInlet.setAttribute('opacity', Math.min(1, t / 0.3).toFixed(2));
+        var y;
+        if (t < 0.3) y = bottomY;
+        else if (t < 1.8) y = bottomY + (waterY0 - bottomY) * ((t - 0.3) / 1.5);
+        else if (t < 1.95) y = waterY0 - (served0 > 0 ? 0.3 * bandH : 0) * ((t - 1.8) / 0.15);
+        else if (t < 2.1) y = (waterY0 - (served0 > 0 ? 0.3 * bandH : 0)) + (served0 > 0 ? 0.3 * bandH : 0) * ((t - 1.95) / 0.15);
+        else y = waterY0;
+
+        for (var kk = 1; kk <= floors; kk++) {
+          var lineY = bottomY - kk * bandH;
+          if (lastY > lineY + 0.01 && y <= lineY + 0.01) flash[kk] = t;
+        }
+        lastY = y;
+        flEls.forEach(function (ln) {
+          var ft = flash[+ln.getAttribute('data-k')];
+          var on = ft !== undefined && t - ft < 0.15;
+          ln.setAttribute('stroke', on ? '#38A3E0' : '#F5F9FD');
+          ln.setAttribute('stroke-width', on ? 2.6 : 1);
+        });
+
+        setWater(y, t);
+        var wet = Math.min(floors, Math.floor((bottomY - y) / bandH + 1e-6));
+        if (t >= 2.1) {
+          reveal = Math.min(1, (t - 2.1) / 0.5);
+          setFloors(served0, reveal, null);
+          elLine.setAttribute('opacity', reveal);
+          elChip.setAttribute('opacity', reveal);
+          elNote.setAttribute('opacity', served0 < floors ? reveal : 0);
+          placeChip(y);
+        } else {
+          setFloors(wet, 0, null);
+        }
+        raf = requestAnimationFrame(loop);
+      }
+      function finishInitial() {
+        curRunning = false; curElapsed = null;
+        reveal = 1;
+        elInlet.setAttribute('opacity', 1);
+        setWater(waterY0, 0);
+        setFloors(served0, 1, null);
+        elLine.setAttribute('opacity', 1);
+        elChip.setAttribute('opacity', 1);
+        elNote.setAttribute('opacity', served0 < floors ? 1 : 0);
+        placeChip(waterY0);
+        resetFlash();
+      }
+      curRunning = true;
+      loop();
+    }
+
+    /* —— 方案联动：水柱按真实试算结果涨到对应层数（0.8s ease-out） —— */
+    function playPlan(kind, plan, onDone, elapsed) {
+      stopAnim();
+      var targetServed, targetPressure, chipText, greenSet = null;
+      if (!plan && kind !== 'local') { if (onDone) onDone(); return; }
+      if (kind === 'local') {
+        targetServed = floors;
+        greenSet = [floors - 1, floors];
+        targetPressure = floors <= 6 ? (serviceHeadTable(target)[floors] || 28) : 10 + 4 * (floors - 1);
+        chipText = (floors - 1) + '–' + floors + ' 层 · ' + targetPressure + ' m';
+      } else {
+        var w = worstPoint(target, plan.sim);
+        targetServed = Math.max(served0, Math.min(floors, WC.ui.networkMap.servedFloors(w.pressure, target.settings)));
+        targetPressure = w.pressure;
+        chipText = targetServed + ' 层 · ' + targetPressure.toFixed(1) + ' m';
+      }
+      var yFrom = waterY0, yTo = bottomY - targetServed * bandH;
+      elInlet.setAttribute('opacity', 1);
+      setChip(chipText, 1);
+      setNote(targetServed < floors ? (targetServed + 1) + ' 层以上：高峰期没水' : '', targetServed < floors ? 1 : 0);
+      elLine.setAttribute('opacity', 1);
+      btnRestore.hidden = false;
+      setCaption(kind === 'local'
+        ? '局部加压：' + (floors - 1) + '–' + floors + ' 层补上供水'
+        : (kind === 'pump' ? '增压后：' : '换管后：') + targetServed + '/' + floors + ' 层达标' +
+          (targetServed >= floors ? '（最不利处 ' + targetPressure.toFixed(1) + ' m）' : '（最不利处 ' + targetPressure.toFixed(1) + ' m，仍不够）'));
+      curStart = now() - (elapsed || 0) * 1000;
+      var D = 800;
+
+      function step() {
+        if (!curRunning) return;
+        if (document.hidden) { raf = null; return; }
+        var p = Math.min(1, (now() - curStart) / D);
+        var e = 1 - Math.pow(1 - p, 3);
+        var y = yFrom + (yTo - yFrom) * e;
+        setWater(y, (now() - curStart) / 1000);
+        placeChip(y);
+        var wet = Math.min(floors, Math.floor((bottomY - y) / bandH + 1e-6));
+        setFloors(wet, 1, greenSet);
+        if (p < 1) { raf = requestAnimationFrame(step); return; }
+        curRunning = false; curElapsed = null;
+        setWater(yTo, 0);
+        setFloors(targetServed, 1, greenSet);
+        placeChip(yTo);
+        if (onDone) onDone();
+      }
+      curRunning = true;
+      step();
+    }
+
+    function begin(player) {
+      curPlayer = player;
+      curElapsed = null;
+      if (document.hidden) { pendingStart = true; return; }
+      pendingStart = false;
+      player(0);
+    }
+
+    function onVis() {
+      if (!wrap.isConnected) { document.removeEventListener('visibilitychange', onVis); return; }
+      if (reduced) return;
+      if (document.hidden) {
+        if (curRunning) { curElapsed = (now() - curStart) / 1000; stopAnim(); }
+        return;
+      }
+      if (pendingStart) { pendingStart = false; if (curPlayer) curPlayer(0); return; }
+      if (curElapsed !== null && curPlayer) {
+        var el2 = curElapsed; curElapsed = null; curRunning = true; curPlayer(el2);
+      }
+    }
+    document.addEventListener('visibilitychange', onVis);
+
+    wrap.querySelector('.fd-replay').addEventListener('click', function () { begin(playInitial); });
+    btnRestore.addEventListener('click', function () { begin(playInitial); });
+
+    /* 兜底：减少动效 → 直接显示最终状态 */
+    function showFinal() {
+      stopAnim();
+      elInlet.setAttribute('opacity', 1);
+      setWater(waterY0, 0);
+      setFloors(served0, 1, null);
+      elLine.setAttribute('opacity', 1);
+      elChip.setAttribute('opacity', 1);
+      setNote(served0 < floors ? (served0 + 1) + ' 层以上：高峰期没水' : '', served0 < floors ? 1 : 0);
+      setChip(served0 + ' 层 · ' + worst.pressure.toFixed(1) + ' m', 1);
+      placeChip(waterY0);
+      setCaption(served0 === 0
+        ? '现状：水刚进管口就停住（0/' + floors + ' 层）'
+        : '现状：水只供到 ' + served0 + ' 层（共 ' + floors + ' 层）');
+    }
+
+    wrap.fdApi = {
+      floors: floors,
+      served: served0,
+      play: function () { begin(playInitial); },
+      plan: function (kind, plan, onDone) { if (reduced) { playPlan(kind, plan, onDone); onDone && onDone(); } else { begin(function (e) { playPlan(kind, plan, onDone, e); }); } },
+      final: showFinal
+    };
+
+    if (reduced) showFinal();
     return wrap;
   }
 
