@@ -1059,6 +1059,30 @@ button { font-family: inherit; font-size: inherit; }
 .verdict-head { display: flex; align-items: flex-start; gap: 6px; }
 .verdict-head .verdict-big { flex: 1; }
 
+/* 结论卡 + 楼层剖面图：桌面并排同高，手机上下排列 */
+.verdict-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: var(--sp-3);
+  align-items: stretch;
+  margin-bottom: var(--sp-3);
+}
+.verdict-row .verdict-card { margin-bottom: 0; }
+.floor-card {
+  display: flex; align-items: center; justify-content: center;
+  padding: var(--sp-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+}
+.floor-svg { width: 320px; height: 400px; display: block; }
+
+@media (max-width: 768px) {
+  .verdict-row { grid-template-columns: minmax(0, 1fr); }
+  .floor-card { order: 2; padding: var(--sp-1) 0; }
+  .floor-svg { width: 100%; height: 240px; }
+}
+
 /* 计算失败红条 + 回到数据 */
 .calc-error { display: flex; align-items: center; justify-content: space-between; gap: var(--sp-3); flex-wrap: wrap; }
 .calc-error-msg { font-weight: 600; }

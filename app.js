@@ -944,7 +944,14 @@
       }
       html += '<p class="verdict-note">基于恒定流平差计算，改造方案仅供参考，实施请由有资质单位复核。</p>';
       card.innerHTML = html;
-      resultBox.appendChild(card);
+
+      /* 结论卡 + 右侧楼层剖面图（没有楼栋节点的工程不画） */
+      var verdictRow = document.createElement('div');
+      verdictRow.className = 'verdict-row';
+      verdictRow.appendChild(card);
+      var floorFig = buildFloorDiagram(target, r);
+      if (floorFig) verdictRow.appendChild(floorFig);
+      resultBox.appendChild(verdictRow);
 
       Array.prototype.forEach.call(card.querySelectorAll('.plan-try'), function (b) {
         b.addEventListener('click', function () {
@@ -1689,8 +1696,98 @@
     root.appendChild(page);
   }
 
-  /* ==================== 编辑页（#/edit/:id） ==================== */
+  /* ==================== 体检页：楼层剖面图（静态 SVG，不带动画） ==================== */
 
+  /** 按最不利楼栋实时算「供到几层」，画一张等轴测楼层剖面。没有楼栋节点则返回 null。 */
+  function buildFloorDiagram(target, result) {
+    var scope;
+    try {
+      scope = verdictScope(target, result);
+    } catch (e) {
+      console.warn('楼层剖面图计算失败：' + (e && e.message ? e.message : e));
+      return null;
+    }
+    if (!scope.rows.length) return null; // 没有楼栋节点（如城镇管网）：不显示
+
+    var worst = scope.rows.reduce(function (a, b) { return b.pressure < a.pressure ? b : a; });
+    var floors = worst.floors || 0;
+    if (!floors) return null;
+    var served = Math.max(0, Math.min(WC.ui.networkMap.servedFloors(worst.pressure, target.settings), floors));
+
+    var topY = 70, bottomY = 340, bandH = (bottomY - topY) / floors;
+    var waterY = bottomY - served * bandH;
+    var s = '';
+
+    /* 地面投影 */
+    s += '<ellipse cx="158" cy="344" rx="112" ry="11" fill="#E9EEF5"/>';
+    /* 立体楼三个面：侧面暗、顶面亮、正面中（色阶差约 8%） */
+    s += '<polygon points="220,70 254,48 254,318 220,340" fill="#D3DEEC"/>';
+    s += '<polygon points="60,70 94,48 254,48 220,70" fill="#EEF4FB"/>';
+    s += '<polygon points="60,70 220,70 220,340 60,340" fill="#E2EAF4"/>';
+
+    /* 楼层格子：没水的楼层半透明灰 + 虚线轮廓 */
+    for (var k = 1; k <= floors; k++) {
+      var y1 = bottomY - k * bandH;
+      if (k > served) {
+        s += '<rect x="60" y="' + y1.toFixed(1) + '" width="160" height="' + bandH.toFixed(1) +
+          '" fill="#94A3B8" fill-opacity="0.45" stroke="#94A3B8" stroke-dasharray="4 3" stroke-width="1"/>';
+      }
+      if (k < floors) {
+        s += '<line x1="60" y1="' + y1.toFixed(1) + '" x2="220" y2="' + y1.toFixed(1) +
+          '" stroke="#F5F9FD" stroke-width="1"/>';
+      }
+    }
+
+    /* 左侧楼层号（楼层多时隔 3 层标一次，避免挤成一团） */
+    var fs = floors <= 8 ? 10 : 9;
+    for (var k2 = 1; k2 <= floors; k2++) {
+      var show = floors <= 8 || k2 === 1 || k2 === floors || k2 % 3 === 0;
+      if (!show) continue;
+      var ty = bottomY - k2 * bandH + bandH / 2 + 3.2;
+      s += '<text x="54" y="' + ty.toFixed(1) + '" text-anchor="end" font-size="' + fs +
+        '" fill="#94A3B8">' + k2 + 'F</text>';
+    }
+
+    /* 立管：有水的段实心蓝，没水的段虚线空心 */
+    if (served > 0) {
+      s += '<rect x="135" y="' + waterY.toFixed(1) + '" width="10" height="' + (bottomY - waterY).toFixed(1) +
+        '" rx="5" fill="#38A3E0"/>';
+    }
+    if (served < floors) {
+      s += '<rect x="135" y="' + topY + '" width="10" height="' + (waterY - topY).toFixed(1) +
+        '" rx="5" fill="none" stroke="#94A3B8" stroke-dasharray="4 3" stroke-width="1.6"/>';
+    }
+    /* 进水管：从地面下方折向右侧 */
+    s += '<path d="M 300 366 H 140 V ' + bottomY + '" fill="none" stroke="#38A3E0" stroke-width="10" ' +
+      'stroke-linecap="round" stroke-linejoin="round"/>';
+
+    /* 水位分界线（高光绿线） */
+    s += '<line x1="128" y1="' + waterY.toFixed(1) + '" x2="152" y2="' + waterY.toFixed(1) +
+      '" stroke="#0E9F6E" stroke-width="2" stroke-linecap="round"/>';
+
+    /* 标签：供到第几层 + 该点自由水压 */
+    var label = served + ' 层 · ' + worst.pressure.toFixed(1) + ' m';
+    var lw = Math.round(14 + label.length * 6.2);
+    var ly = Math.max(topY + 2, waterY - 22);
+    s += '<rect x="152" y="' + ly.toFixed(1) + '" width="' + lw + '" height="16" rx="3" ' +
+      'fill="#E7F6EF" stroke="#BCE5D2"/>';
+    s += '<text x="159" y="' + (ly + 11.5).toFixed(1) + '" font-size="10" font-weight="700" fill="#0E9F6E">' +
+      esc(label) + '</text>';
+
+    /* 右上角提示：哪几层没水 */
+    if (served < floors) {
+      s += '<text x="316" y="38" text-anchor="end" font-size="10" font-weight="600" fill="#DC2626">' +
+        (served + 1) + ' 层以上：高峰期没水</text>';
+    }
+
+    var wrap = document.createElement('div');
+    wrap.className = 'floor-card';
+    wrap.innerHTML = '<svg class="floor-svg" viewBox="0 0 320 400" role="img" aria-label="楼层水压剖面图：' +
+      esc(worst.id) + ' 共 ' + floors + ' 层，能供到 ' + served + ' 层">' + s + '</svg>';
+    return wrap;
+  }
+
+  /* ==================== 编辑页（#/edit/:id） ==================== */
   var editTab = 'water'; // 编辑页当前分区，默认「用水量」
 
   var EDIT_TABS = [
