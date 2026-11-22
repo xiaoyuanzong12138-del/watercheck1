@@ -551,17 +551,18 @@
     });
     var worst = worstPoint(target, result);
     if (srcNode && worst) {
-      var rows = reportRows(target, result);
-      var maxFloors = rows.length ? Math.max.apply(null, rows.map(function (r) { return r.floors; })) : 6;
-      var need = sh[Math.min(maxFloors, 6)] || sh[6];
-      var gap = need - worst.pressure;                          // 缺口
+      // 服务水头按最不利点的实际层数算：≤6 层查表（1 层 10、2 层 12、6 层 28），
+      // 超过 6 层按每层 +4 m 外推（18 层 → 78 m）
+      var floors = worst.floors || 6;
+      var need = floors <= 6 ? (sh[Math.max(floors, 1)] || sh[6]) : 10 + 4 * (floors - 1);
       var entry = (srcNode.head || 0) - (srcNode.elev || 0);    // 入口水压
-      var friction = entry - (worst.pressure + worst.elev);     // 到最不利点的沿程水头损失
+      var friction = entry - (worst.pressure + worst.elev);     // 到最不利点的全程水头损失
+      var gap = (need + friction) - entry;                      // 缺口 = 服务水头 + 损失 − 入口压力
       if (gap > 0 && friction < gap) {
         out.push({
           title: '入口压力不足',
           text: '入口 ' + entry.toFixed(1) + ' m，全程水头损失只有 ' + Math.max(friction, 0).toFixed(1) +
-            ' m，而 ' + Math.min(maxFloors, 6) + ' 层需要 ' + need + ' m，缺了 ' + gap.toFixed(1) +
+            ' m，而 ' + floors + ' 层需要 ' + need + ' m，缺了 ' + gap.toFixed(1) +
             ' m —— 问题在压力，不在管子。'
         });
       }
