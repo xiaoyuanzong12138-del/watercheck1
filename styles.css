@@ -259,6 +259,107 @@ button { font-family: inherit; font-size: inherit; }
 .hero-text h1 { color: var(--ink); }
 .hero-sub { margin-top: var(--sp-1); color: var(--muted); font-size: var(--fs-14); }
 
+/* 首页问句开场 */
+.home-bar { justify-content: flex-start; }
+.home-brand { font-size: 16px; font-weight: 600; color: var(--ink); letter-spacing: .2px; }
+
+.hero-q {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0;
+  margin: var(--sp-8) 0 var(--sp-7);
+  padding-bottom: var(--sp-4);
+}
+.hero-q-title {
+  font-size: 40px;
+  line-height: 1.25;
+  font-weight: 700;
+  letter-spacing: -.5px;
+  margin: 0;
+  color: var(--ink);
+  animation: heroUp .6s cubic-bezier(.22,.8,.3,1) both;
+}
+.hero-q-sub {
+  margin: var(--sp-4) 0 0;
+  max-width: 520px;
+  font-size: 18px;
+  line-height: 1.7;
+  color: var(--muted);
+  animation: heroUp .6s cubic-bezier(.22,.8,.3,1) .15s both;
+}
+@keyframes heroUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.scroll-hint {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  width: 24px;
+  margin: var(--sp-6) 0 0;
+  opacity: 0;
+  animation: hintIn .5s ease 2s both;
+}
+.scroll-line { width: 1px; height: 24px; background: rgba(15,23,32,.28); }
+.scroll-arrow {
+  font-size: 14px;
+  line-height: 1;
+  color: rgba(15,23,32,.45);
+  animation: hintFloat 1.6s ease-in-out infinite;
+}
+@keyframes hintIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes hintFloat {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(6px); }
+}
+
+/* 页面末尾：为什么做这个 */
+.story { padding: 96px 0; }
+.story-inner { max-width: 640px; margin: 0 auto; }
+.story-body {
+  position: relative;
+  padding-left: 28px;
+  max-width: 560px;
+  font-size: 19px;
+  line-height: 1.9;
+  color: var(--ink);
+  opacity: 0;
+  transform: translateY(20px);
+  transition: opacity .7s ease, transform .7s ease;
+}
+.story-body::before {
+  content: '';
+  position: absolute;
+  left: 0; top: 0;
+  width: 2px; height: 100%;
+  background: rgba(15,23,32,.15);
+}
+.story-body p { margin: 0 0 1.1em; }
+.story-body p:last-child { margin-bottom: 0; }
+.story.is-in .story-body { opacity: 1; transform: none; }
+.story-sign {
+  margin: var(--sp-5) 0 0;
+  text-align: right;
+  font-size: 14px;
+  line-height: 1.8;
+  color: var(--muted);
+  opacity: 0;
+  transition: opacity .7s ease .12s;
+}
+.story.is-in .story-sign { opacity: 1; }
+
+@media (max-width: 560px) {
+  .hero-q { margin: var(--sp-6) 0 var(--sp-5); }
+  .hero-q-title { font-size: 30px; }
+  .hero-q-sub { font-size: 16px; max-width: none; }
+  .story { padding: 56px 20px; }
+  .story-inner { max-width: none; }
+  .story-body { font-size: 17px; padding-left: 0; padding-top: 20px; }
+  .story-body::before { width: 32px; height: 2px; }
+}
+
 .section { margin-bottom: var(--sp-6); }
 
 .section-head {
@@ -1161,10 +1262,11 @@ a:focus-visible {
 }
 a:focus-visible { border-radius: var(--radius-xs); }
 
-/* 手机：按钮够大、首页首屏能看到「新建体检」、示例单列 */
+/* 手机：按钮够大、示例单列 */
 @media (max-width: 560px) {
   .btn { min-height: 44px; }
   .btn-sm, .act { min-height: 40px; }
+  .js-new-project { min-height: 44px; }
   .hero { margin: var(--sp-3) 0 var(--sp-4); align-items: stretch; flex-direction: column; gap: var(--sp-3); }
   .hero-text h1 { font-size: 24px; }
   .hero .btn { width: 100%; }

@@ -203,6 +203,8 @@
     if (guide) page.appendChild(guide);
     page.appendChild(buildSamples());
     page.appendChild(buildMyProjects());
+    page.appendChild(buildStory());
+    root.appendChild(buildHomeBar());
     root.appendChild(page);
   }
 
@@ -339,24 +341,66 @@
 
   function buildHero() {
     var hero = document.createElement('header');
-    hero.className = 'hero';
-    var text = document.createElement('div');
-    text.className = 'hero-text';
-    text.innerHTML = '<h1>水压体检</h1>' +
-      '<p class="hero-sub">给水管网水力体检 · 一键算出你家能上几层</p>';
-
-    var btn = document.createElement('button');
-    btn.className = 'btn btn-primary';
-    btn.textContent = '＋ 新建体检';
-    btn.addEventListener('click', function () {
-      var p = store.create('我的体检 ' + (store.loadAll().length + 1));
-      render();
-      flashItem(p.id);
-    });
-
-    hero.appendChild(text);
-    hero.appendChild(btn);
+    hero.className = 'hero hero-q';
+    hero.innerHTML =
+      '<h1 class="hero-q-title">为什么高楼层的自来水，<br>总是很小？</h1>' +
+      '<p class="hero-q-sub">因为水压只够把它推到某一层。<br>' +
+      '问题是：推到第几层？还能不能往上？<br>' +
+      '这个工具，30 秒给你答案。</p>' +
+      '<div class="scroll-hint" aria-hidden="true"><span class="scroll-line"></span><span class="scroll-arrow">↓</span></div>';
     return hero;
+  }
+
+  /** 首页顶栏：产品名降级为左上角小字。 */
+  function buildHomeBar() {
+    var bar = document.createElement('header');
+    bar.className = 'topbar home-bar';
+    bar.innerHTML = '<span class="home-brand">水压体检</span>';
+    return bar;
+  }
+
+  /** 页面末尾的「为什么做这个」故事卡（层数取自幸福里示例的实时结果）。 */
+  function buildStory() {
+    var sec = document.createElement('section');
+    sec.className = 'story';
+
+    var quote = '「这栋楼，供不到顶」';
+    try {
+      var c = sampleResult(samples.byId('sample-liuceng-muzhi'));
+      if (c.ok) {
+        var w = worstPoint(c.target, c.result);
+        if (w) quote = '「这栋 ' + w.floors + ' 层的楼，只能供到 ' + w.served + ' 层」';
+      }
+    } catch (e) {
+      console.warn('故事卡取示例结果失败：' + (e && e.message ? e.message : e));
+    }
+
+    sec.innerHTML =
+      '<div class="story-inner">' +
+      '<div class="story-body">' +
+      '<p>我是给排水科学与工程专业的学生。<br>' +
+      '大三做课程设计，我把一张环状管网平差表算了两天 ——<br>' +
+      '两三个环、一百多行，改一个管径就要从头再来。</p>' +
+      '<p>那时候我发现：这东西算得出来，可它回答不了任何人的问题。<br>' +
+      '物业说不清是管子细还是压力不够，住户只知道水小。</p>' +
+      '<p>所以我把那套算法搬进了浏览器：<br>' +
+      '不用装软件、不用登录，输入小区管网，它先说一句人话 ——<br>' +
+      esc(quote) + '，再说为什么。</p>' +
+      '</div>' +
+      '<p class="story-sign">赵佳杰 · 给排水科学与工程<br>安徽工程大学 2023 级</p>' +
+      '</div>';
+
+    if (typeof IntersectionObserver === 'function') {
+      var io = new IntersectionObserver(function (entries) {
+        entries.forEach(function (en) {
+          if (en.isIntersecting) { sec.classList.add('is-in'); io.disconnect(); }
+        });
+      }, { threshold: 0.15 });
+      io.observe(sec);
+    } else {
+      sec.classList.add('is-in');
+    }
+    return sec;
   }
 
   function buildSamples() {
@@ -430,6 +474,16 @@
 
     head.appendChild(importBtn);
     head.appendChild(fileInput);
+
+    var newBtn = document.createElement('button');
+    newBtn.className = 'btn btn-primary btn-sm js-new-project';
+    newBtn.textContent = '＋ 新建体检';
+    newBtn.addEventListener('click', function () {
+      var p = store.create('我的体检 ' + (store.loadAll().length + 1));
+      render();
+      flashItem(p.id);
+    });
+    head.insertBefore(newBtn, importBtn);
     sec.appendChild(head);
 
     var wrap = document.createElement('div');
