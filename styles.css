@@ -440,6 +440,61 @@ button { font-family: inherit; font-size: inherit; }
   .scrolly-tie { display: none; }
 }
 
+/* 首页：水压不够，怎么办（三方案卡） */
+.fixes { padding: 8px 0 72px; }
+.fixes.is-off { display: none; }
+.fixes-head { margin-bottom: var(--sp-5); }
+.fixes-title { margin: 0; font-size: 28px; line-height: 1.35; color: var(--ink); }
+.fixes-sub { margin: 8px 0 0; font-size: 16px; color: var(--muted); }
+.fixes-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: var(--sp-4);
+  align-items: start;
+}
+.fix-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 10px;
+  padding: var(--sp-4);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  background: var(--surface);
+  opacity: 0;
+  transform: translateY(40px) scale(.96);
+  transition: opacity .55s ease, transform .55s cubic-bezier(.22,.8,.3,1);
+}
+.fix-card.is-in { opacity: 1; transform: none; }
+.fix-fig { display: flex; align-items: center; justify-content: center; width: 100%; }
+.fix-card .floor-card { border: 0; background: none; padding: 0; }
+.fix-card .floor-card.is-bare .fd-note { display: none; }
+.fix-card .floor-svg { width: 192px; height: 240px; }
+.fix-name { margin: 0; font-size: 16px; line-height: 1.4; text-align: center; color: var(--ink); }
+.fix-try { width: 100%; min-height: 40px; }
+.fix-result {
+  width: 100%;
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--ink-2);
+  text-align: center;
+}
+.fixes-cta {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--sp-3);
+  margin-top: var(--sp-6);
+}
+
+@media (max-width: 768px) {
+  .fixes { padding: 4px 0 56px; }
+  .fixes-grid { grid-template-columns: 1fr; gap: 16px; }
+  .fixes-cta { flex-direction: column; align-items: stretch; }
+  .fixes-cta .btn { width: 100%; min-height: 44px; }
+}
+
 @media (max-width: 560px) {
   .hero-q { margin: var(--sp-6) 0 var(--sp-5); }
   .hero-q-title { font-size: 30px; }

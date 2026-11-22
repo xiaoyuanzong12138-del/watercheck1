@@ -199,6 +199,7 @@
     page.className = 'home';
     page.appendChild(buildHero());
     page.appendChild(buildScrolly());
+    page.appendChild(buildFixes());
     page.appendChild(buildShowcase());
     var guide = buildGuide();
     if (guide) page.appendChild(guide);
@@ -358,6 +359,146 @@
     bar.className = 'topbar home-bar';
     bar.innerHTML = '<span class="home-brand">水压体检</span>';
     return bar;
+  }
+
+  /** 水压不够，怎么办：三张方案卡（全部数字来自实时试算）。 */
+  function buildFixes() {
+    var sec = document.createElement('section');
+    sec.className = 'fixes';
+
+    var s = samples.byId('sample-liuceng-muzhi');
+    var c = s ? sampleResult(s) : null;
+    if (!c || !c.ok) {
+      console.warn('三方案卡跳过：示例求解失败');
+      sec.classList.add('is-off');
+      return sec;
+    }
+    var target = c.target, result = c.result;
+    var plans;
+    try { plans = buildPlans(target, result); } catch (e) { plans = []; }
+    var worst = worstPoint(target, result);
+    var floors = (worst && worst.floors) || 6;
+
+    var pumpPlan = null, pipePlan = null;
+    plans.forEach(function (p) {
+      if (!pumpPlan && p.name === '二次加压') pumpPlan = p;
+      if (!pipePlan && p.name.indexOf('扩径') >= 0) pipePlan = p;
+    });
+    if (!pumpPlan) {
+      console.warn('三方案卡跳过：缺少增压试算结果');
+      sec.classList.add('is-off');
+      return sec;
+    }
+
+    var head = document.createElement('div');
+    head.className = 'fixes-head';
+    head.innerHTML = '<h2 class="fixes-title">水压不够，怎么办？</h2>' +
+      '<p class="fixes-sub">三种办法，点一下看它管不管用</p>';
+    sec.appendChild(head);
+
+    var grid = document.createElement('div');
+    grid.className = 'fixes-grid';
+
+    var cards = [];
+
+    function makeCard(idx, title, kind, plan, resultText) {
+      var card = document.createElement('article');
+      card.className = 'fix-card';
+      card.style.transitionDelay = (idx * 0.12).toFixed(2) + 's';
+
+      var figHost = document.createElement('div');
+      figHost.className = 'fix-fig';
+      var fig = buildFloorDiagram(target, result, { bare: true });
+      if (fig) { figHost.appendChild(fig); fig.fdApi.final(); }
+
+      var h3 = document.createElement('h3');
+      h3.className = 'fix-name';
+      h3.textContent = title;
+
+      var btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'btn fix-try';
+      btn.textContent = '试试看';
+
+      var row = document.createElement('p');
+      row.className = 'fix-result';
+      row.hidden = true;
+
+      btn.addEventListener('click', function () {
+        if (btn.disabled || !fig) return;
+        btn.disabled = true;
+        fig.fdApi.plan(kind, plan, function () {
+          btn.disabled = false;
+          row.textContent = resultText();
+          row.hidden = false;
+        });
+      });
+
+      card.appendChild(figHost);
+      card.appendChild(h3);
+      card.appendChild(btn);
+      card.appendChild(row);
+      grid.appendChild(card);
+      cards.push(card);
+    }
+
+    /* 卡 1 · 增压泵：水涨到顶层、全绿、标签更新 */
+    makeCard(0, '加一台增压泵', 'pump', pumpPlan, function () {
+      var w = worstPoint(target, pumpPlan.sim);
+      return '最不利点 ' + w.pressure.toFixed(1) + ' m，' + floors + ' 层全达标';
+    });
+
+    /* 卡 2 · 换主管：如实给出真实涨幅（可能几乎没有） */
+    if (pipePlan) {
+      makeCard(1, '把主管换成更大的管', 'pipe', pipePlan, function () {
+        var w0 = worstPoint(target, result), w1 = worstPoint(target, pipePlan.sim);
+        var delta = w1.pressure - w0.pressure;
+        if (delta >= 0.05) {
+          return '最不利点只升了 ' + delta.toFixed(1) + ' m —— 说明瓶颈不在管径，在入口压力';
+        }
+        return '水压几乎没变 —— 说明瓶颈不在管径，在入口压力';
+      });
+    }
+
+    /* 卡 3 · 顶部两层单独加压 */
+    makeCard(2, (floors - 1) + '–' + floors + ' 层单独二次加压', 'local', pumpPlan, function () {
+      return (floors - 1) + '–' + floors + ' 层独立供水，1–' + (floors - 2) + ' 层维持原状';
+    });
+
+    sec.appendChild(grid);
+
+    var cta = document.createElement('div');
+    cta.className = 'fixes-cta';
+    var tryBtn = document.createElement('button');
+    tryBtn.type = 'button';
+    tryBtn.className = 'btn btn-primary';
+    tryBtn.textContent = '用我家小区试一下 →';
+    tryBtn.addEventListener('click', function () {
+      var p = store.create('我的体检 ' + (store.loadAll().length + 1));
+      location.hash = '#/edit/' + p.id;
+    });
+    var docBtn = document.createElement('a');
+    docBtn.className = 'btn';
+    docBtn.href = '#/report/sample-liuceng-muzhi';
+    docBtn.textContent = '看看完整的计算过程 →';
+    cta.appendChild(tryBtn);
+    cta.appendChild(docBtn);
+    sec.appendChild(cta);
+
+    if (typeof IntersectionObserver === 'function') {
+      var io = new IntersectionObserver(function (entries) {
+        entries.forEach(function (en) {
+          if (en.isIntersecting) {
+            cards.forEach(function (cd) { cd.classList.add('is-in'); });
+            io.disconnect();
+          }
+        });
+      }, { threshold: 0.2 });
+      io.observe(sec);
+    } else {
+      cards.forEach(function (cd) { cd.classList.add('is-in'); });
+    }
+    return sec;
   }
 
   /** 首页「滚动驱动」舞台：楼体弹起 + 水随滚动爬升 + 旁白/解释框。 */
@@ -1939,6 +2080,7 @@
    *  opts.scrub = true 时改为「滚动驱动」：不自动播放，由外部调用 fdApi.scrub(p) 控制水位。 */
   function buildFloorDiagram(target, result, opts) {
     var scrub = !!(opts && opts.scrub);
+    var bare = !!(opts && opts.bare); // 只要画布：不放「重播/恢复原状」与说明行
     var scope;
     try {
       scope = verdictScope(target, result);
@@ -2018,11 +2160,11 @@
     s += '<text class="fd-note" x="316" y="38" text-anchor="end" font-size="10" font-weight="600" fill="#DC2626" opacity="0"></text>';
 
     var wrap = document.createElement('div');
-    wrap.className = 'floor-card' + (scrub ? ' is-scrub' : '');
+    wrap.className = 'floor-card' + (scrub ? ' is-scrub' : '') + (bare ? ' is-bare' : '');
     wrap.innerHTML =
       '<svg class="floor-svg" viewBox="0 0 320 400" role="img" aria-label="楼层水压剖面图：' + esc(worst.id) +
       ' 共 ' + floors + ' 层，能供到 ' + served0 + ' 层">' + s + '</svg>' +
-      (scrub ? '' : '<div class="fd-bar"><button type="button" class="fd-btn fd-replay">重播</button>' +
+      (scrub || bare ? '' : '<div class="fd-bar"><button type="button" class="fd-btn fd-replay">重播</button>' +
         '<button type="button" class="fd-btn fd-restore" hidden>恢复原状</button></div>' +
         '<p class="fd-caption"></p>');
 
@@ -2194,12 +2336,12 @@
       setChip(chipText, 1);
       setNote(targetServed < floors ? (targetServed + 1) + ' 层以上：高峰期没水' : '', targetServed < floors ? 1 : 0);
       elLine.setAttribute('opacity', 1);
-      btnRestore.hidden = false;
+      if (btnRestore) btnRestore.hidden = false;
       setCaption(kind === 'local'
         ? '局部加压：' + (floors - 1) + '–' + floors + ' 层补上供水'
         : (kind === 'pump' ? '增压后：' : '换管后：') + targetServed + '/' + floors + ' 层达标' +
           (targetServed >= floors ? '（最不利处 ' + targetPressure.toFixed(1) + ' m）' : '（最不利处 ' + targetPressure.toFixed(1) + ' m，仍不够）'));
-      curStart = now() - (elapsed || 0) * 1000;
+      curStart = now() - (elapsed || 0) * 1000 - (reduced ? 2000 : 0);
       var D = 800;
 
       function step() {
@@ -2245,7 +2387,7 @@
     }
     document.addEventListener('visibilitychange', onVis);
 
-    if (!scrub) {
+    if (!scrub && !bare) {
       wrap.querySelector('.fd-replay').addEventListener('click', function () { begin(playInitial); });
       btnRestore.addEventListener('click', function () { begin(playInitial); });
     }
